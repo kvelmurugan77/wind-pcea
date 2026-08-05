@@ -1,0 +1,37 @@
+{
+  "farm_name": "Kayathar Hills Wind Farm (demo)",
+  "latitude": 9.0,
+  "longitude": 77.8,
+  "hub_height_m": 100.0,
+  "rotor_diameter_m": 136.0,
+  "rated_power_kw": 2500.0,
+  "cut_in_mps": 3.0,
+  "cut_out_mps": 25.0,
+  "warranted_power_curve": "/home/user/wind_pcea/sample_data/warranted_power_curve.csv",
+  "long_term_wind_file": "/home/user/wind_pcea/sample_data/long_term_daily_ws.csv",
+  "air_density_correction": true,
+  "air_pressure_kpa": 99.2,
+  "electrical_loss_pct": 2.0,
+  "other_loss_pct": 0.5,
+  "preconstruction_p50_gwh": 92.0,
+  "status_codes": {
+    "operating": [
+      100
+    ],
+    "fault": [
+      200
+    ],
+    "maintenance": [
+      300
+    ],
+    "grid": [
+      400
+    ],
+    "curtailment": [
+      500
+    ],
+    "environmental": [
+      600
+    ]
+  }
+}
