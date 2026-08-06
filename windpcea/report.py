@@ -19,14 +19,20 @@ def _sensitivity_table(r):
     """One-at-a-time sensitivity of net P50 to key parameters."""
     from . import powercurve as pc_mod
     rows = []
-    gross = r["losses"]["gross_lt_mwh"]
-    net = r["losses"]["net_mwh"]
-    p50 = r["uncertainty"]["p"]["P50"]
-    total_loss = r["losses"]["tree"]["pct_of_gross"].sum() / 100.0
+    # force every value numeric — a single string in the loss tree would make
+    # .sum() concatenate strings and break all arithmetic below
+    tree = r["losses"]["tree"].copy()
+    for _c in ("pct_of_gross", "energy_mwh"):
+        if _c in tree.columns:
+            tree[_c] = pd.to_numeric(tree[_c], errors="coerce").fillna(0.0)
+    gross = float(r["losses"]["gross_lt_mwh"])
+    net = float(r["losses"]["net_mwh"])
+    p50 = float(r["uncertainty"]["p"]["P50"])
+    total_loss = float(tree["pct_of_gross"].sum()) / 100.0
 
     # each loss category +/- 1 pp
-    for _, row in r["losses"]["tree"].iterrows():
-        li = row["pct_of_gross"] / 100.0
+    for _, row in tree.iterrows():
+        li = float(row["pct_of_gross"]) / 100.0
         denom = 1.0 - li
         if denom <= 1e-6:
             continue
@@ -37,7 +43,8 @@ def _sensitivity_table(r):
 
     # wind speed +/- 0.1 m/s
     A, k = r["climate"]["lt_weibull"]
-    n_turb = r["meta"]["num_turbines"]
+    A = float(A); k = float(k)
+    n_turb = int(r["meta"]["num_turbines"])
     v_arr, p_arr = r["v_arr"], r["p_arr"]
     gross_hi = n_turb * pc_mod.aep_from_weibull(A * (1 + 0.1 / A), k, v_arr, p_arr)
     gross_lo = n_turb * pc_mod.aep_from_weibull(A * (1 - 0.1 / A), k, v_arr, p_arr)
@@ -52,8 +59,8 @@ def _sensitivity_table(r):
 
     # measurement period +- 25%
     if r["climate"].get("production") and r["climate"]["production"].get("lt_gross_mwh"):
-        mb = r["climate"]["production"]["lt_gross_mwh"]
-        for sgn, lbl in [("+25%", 1.25), ("−25%", 0.75)]:
+        mb = float(r["climate"]["production"]["lt_gross_mwh"])
+        for sgn, lbl in [(1.25, "+25%"), (0.75, "−25%")]:
             net_s = mb * sgn * (1 - total_loss)
             rows.append({"parameter": f"Production-regression gross {lbl}",
                          "change": lbl,
@@ -90,7 +97,7 @@ def _conclusions_html(r, sens):
                    f"{'a user reference' if 'user' in cl['method'] else 'NASA POWER reanalysis'}"
                    f" achieved R² = <b>{cl['mcp']['r2']:.2f}</b> over "
                    f"{cl['lt_n_years']:.1f} years.")
-    pts.append(f"Total losses are <b>{r['losses']['tree']['pct_of_gross'].sum():.2f}%</b> "
+    pts.append(f"Total losses are <b>{_numeric_sum(r['losses']['tree']['pct_of_gross']):.2f}%</b> "
                f"of gross, giving net P50 = <b>{r['uncertainty']['p']['P50']:,.0f} MWh/yr</b> "
                f"(P90 = {r['uncertainty']['p']['P90']:,.0f} MWh/yr).")
 
@@ -136,15 +143,53 @@ def _conclusions_html(r, sens):
     return "".join(html)
 
 
-def _fmt(x, nd=0):
-    if x is None or (isinstance(x, float) and not np.isfinite(x)):
+def _to_num(x):
+    """Best-effort numeric cast (strings like '2.0' -> 2.0); None/NaN -> None."""
+    if x is None:
+        return None
+    try:
+        f = float(x)
+        if np.isfinite(f):
+            return f
+        return None
+    except (TypeError, ValueError):
+        return x  # not numeric: keep for display
+
+
+def _nfmt(x, nd=0, suffix="", plus=False):
+    """Direct f-string formatting that never crashes on None/NaN/str."""
+    x = _to_num(x)
+    if x is None:
         return "–"
+    if isinstance(x, str):
+        return x + suffix
+    return f"{x:+,.{nd}f}{suffix}" if plus else f"{x:,.{nd}f}{suffix}"
+
+
+def _numeric_sum(s):
+    """Sum that always returns a float — even if the series contains strings
+    (pandas .sum() would otherwise concatenate and break formatting)."""
+    try:
+        return float(pd.to_numeric(s, errors="coerce").fillna(0.0).sum())
+    except Exception:
+        return 0.0
+
+
+def _fmt(x, nd=0):
+    x = _to_num(x)
+    if x is None:
+        return "–"
+    if isinstance(x, str):
+        return x
     return f"{x:,.{nd}f}"
 
 
 def _pct(x, nd=1):
-    if x is None or (isinstance(x, float) and not np.isfinite(x)):
+    x = _to_num(x)
+    if x is None:
         return "–"
+    if isinstance(x, str):
+        return x
     return f"{x:.{nd}f}%"
 
 
@@ -254,6 +299,12 @@ def build_html(r, outdir):
     bm = r["benchmark"]
 
     parts = []
+    # guarantee the loss tree is numeric BEFORE any .sum() — a string anywhere
+    # would make pandas .sum() concatenate and crash every format below
+    tree = tree.copy()
+    for _c in ("pct_of_gross", "energy_mwh"):
+        if _c in tree.columns:
+            tree[_c] = pd.to_numeric(tree[_c], errors="coerce").fillna(0.0)
     parts.append(f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>PCEYA — {meta['farm_name']}</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -274,7 +325,7 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
     parts.append(f"""<div class="cards">
 <div class="card"><div class="k">Gross AEP (long-term)</div><div class="v">{_fmt(gross_lt)}</div>
 <div class="s">MWh/yr, warranted curve</div></div>
-<div class="card"><div class="k">Total losses</div><div class="v">{_pct(tree['pct_of_gross'].sum())}</div>
+<div class="card"><div class="k">Total losses</div><div class="v">{_pct(_to_num(_numeric_sum(tree['pct_of_gross'])))}</div>
 <div class="s">of gross AEP</div></div>
 <div class="card"><div class="k">Net AEP — P50</div><div class="v">{_fmt(p['P50'])}</div>
 <div class="s">MWh/yr &nbsp;•&nbsp; 80% CI {_fmt(unc['p50_ci80'][0])}–{_fmt(unc['p50_ci80'][1])}</div></div>
@@ -300,15 +351,15 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
                       "Power curve deviation (energy-weighted)", "Wake loss",
                       "Long-term mean wind speed", "Measurement period",
                       "Data capture rate"],
-        "value": [f"{gross_lt:,.0f} MWh/yr", f"{tree['pct_of_gross'].sum():.2f}%",
-                  f"{p['P50']:,.0f} MWh/yr", f"{p['P75']:,.0f} MWh/yr",
-                  f"{p['P90']:,.0f} MWh/yr", f"{p['P99']:,.0f} MWh/yr",
-                  f"{r['capacity_factor_pct']:.1f}%",
-                  f"{r['full_load_hours']:,.0f} h/yr",
-                  f"{avail['time_avail_pct']:.2f}%", f"{avail['prod_avail_pct']:.2f}%",
-                  f"{r['power_curve']['deviation_pct']:+.2f}%",
-                  f"{r['wake']['wake_loss_pct']:.2f}%",
-                  f"{r['climate']['lt_mean_ws']:.2f} m/s",
+        "value": [_nfmt(gross_lt, 0, " MWh/yr"), _nfmt(_numeric_sum(tree['pct_of_gross']), 2, "%"),
+                  _nfmt(p['P50'], 0, " MWh/yr"), _nfmt(p['P75'], 0, " MWh/yr"),
+                  _nfmt(p['P90'], 0, " MWh/yr"), _nfmt(p['P99'], 0, " MWh/yr"),
+                  _nfmt(r['capacity_factor_pct'], 1, "%"),
+                  _nfmt(r['full_load_hours'], 0, " h/yr"),
+                  _nfmt(avail['time_avail_pct'], 2, "%"), _nfmt(avail['prod_avail_pct'], 2, "%"),
+                  _nfmt(r['power_curve']['deviation_pct'], 2, "%", plus=True),
+                  _nfmt(r['wake']['wake_loss_pct'], 2, "%"),
+                  _nfmt(r['climate']['lt_mean_ws'], 2, " m/s"),
                   f"{meta['record_start']} → {meta['record_end']}",
                   f"{r['qc']['coverage_pct']:.1f}%"]})
     parts.append(html_table(kr, caption="Key results — post-construction energy yield assessment"))
@@ -653,7 +704,7 @@ SCADA period; electrical and other losses are inputs.</li>
 components; P50/P75/P90/P99 are quantiles of the resulting net-AEP distribution.</li>
 </ul>
 <b>In this run:</b> gross {_fmt(gross_lt)} MWh/yr ({r['losses']['lt_method_used']})
-→ {_pct(tree['pct_of_gross'].sum())} losses
+→ {_pct(_to_num(_numeric_sum(tree['pct_of_gross'])))} losses
 → deterministic net {_fmt(unc['deterministic_net_mwh'])} MWh/yr → P50 {_fmt(p['P50'])} MWh/yr.
 Full derivation in Appendix B.</div>""")
     parts.append(_chart(lambda: pl.fig_to_b64(pl.loss_waterfall(
@@ -762,7 +813,7 @@ applies a lognormal multiplier to each component (1σ<sub>i</sub>); combined
 (lognormal median), P90 ≈ P50 · e<sup>−1.282σ</sup>, P75 ≈ P50 · e<sup>−0.674σ</sup>.</p>""")
     parts.append(f"""<p class="lead"><b>Worked example (this run):</b> A<sub>LT</sub> =
 {lt['lt_weibull'][0]:.2f} m/s, k<sub>LT</sub> = {lt['lt_weibull'][1]:.2f} → gross
-{_fmt(gross_lt)} MWh/yr; total losses {_pct(tree['pct_of_gross'].sum())} → deterministic net
+{_fmt(gross_lt)} MWh/yr; total losses {_pct(_to_num(_numeric_sum(tree['pct_of_gross'])))} → deterministic net
 {_fmt(unc['deterministic_net_mwh'])} MWh/yr → <b>P50 = {_fmt(p['P50'])} MWh/yr</b>,
 P75 = {_fmt(p['P75'])}, P90 = {_fmt(p['P90'])}, P99 = {_fmt(p['P99'])}.</p>""")
 
@@ -922,7 +973,7 @@ def console_summary(r):
         f"Weibull A={r['climate']['lt_weibull'][0]:.2f} m/s, k={r['climate']['lt_weibull'][1]:.2f}",
         f"  Gross AEP: {r['losses']['gross_lt_mwh']:,.0f} MWh/yr ({r['losses']['lt_method_used']}; "
         f"Method A cross-check: {r['losses']['gross_lt_mwh_method_a']:,.0f})   "
-        f"Total losses: {tree['pct_of_gross'].sum():.2f}%",
+        f"Total losses: {_numeric_sum(tree['pct_of_gross']):.2f}%",
         f"  Net AEP: P50 = {p['P50']:,.0f}   P75 = {p['P75']:,.0f}   "
         f"P90 = {p['P90']:,.0f}   P99 = {p['P99']:,.0f} MWh/yr",
         f"  Capacity factor: {r['capacity_factor_pct']:.1f}%",

@@ -28,18 +28,23 @@ def build_loss_tree(cfg, energy, wake_energy_mwh, perf_energy_mwh, gross_period_
     ]
     rows = []
     for name, e_mwh, desc in items:
-        rows.append({"loss": name, "energy_mwh": e_mwh, "pct_of_gross": pct(e_mwh),
+        rows.append({"loss": name, "energy_mwh": float(e_mwh) if e_mwh is not None else np.nan,
+                     "pct_of_gross": float(pct(e_mwh)),
                      "description": desc})
     rows.append({"loss": "Electrical", "energy_mwh": np.nan,
-                 "pct_of_gross": cfg["electrical_loss_pct"],
+                 "pct_of_gross": float(cfg["electrical_loss_pct"]),
                  "description": "Transformer, collection & transmission losses (input)"})
     rows.append({"loss": "Other", "energy_mwh": np.nan,
-                 "pct_of_gross": cfg["other_loss_pct"],
+                 "pct_of_gross": float(cfg["other_loss_pct"]),
                  "description": "Miscellaneous losses (input)"})
     tree = pd.DataFrame(rows)
+    # guarantee numeric dtype (a string anywhere would break .sum() and all
+    # downstream arithmetic with 'can't multiply sequence by non-int')
+    tree["pct_of_gross"] = pd.to_numeric(tree["pct_of_gross"], errors="coerce").fillna(0.0)
+    tree["energy_mwh"] = pd.to_numeric(tree["energy_mwh"], errors="coerce")
     measured_loss_pct = tree.loc[tree["energy_mwh"].notna(), "pct_of_gross"].sum()
     total_loss_pct = tree["pct_of_gross"].sum()
-    net_mwh = gross_lt_mwh * (1.0 - total_loss_pct / 100.0)
+    net_mwh = float(gross_lt_mwh) * (1.0 - float(total_loss_pct) / 100.0)
 
     # reconciliation over measured period
     # measured energy is at turbine terminals, so only SCADA-derived losses
