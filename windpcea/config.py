@@ -59,6 +59,9 @@ def load_config(path=None, overrides=None):
     """Load a JSON config file and merge with defaults.
 
     overrides: dict of keys to override (used by the web UI).
+    Numeric fields are coerced to float/int so string-typed values in a
+    hand-edited JSON can never break arithmetic ("3450" * 1.15 would
+    otherwise raise 'can't multiply sequence by non-int of type float').
     """
     cfg = dict(DEFAULTS)
     if path and os.path.exists(path):
@@ -67,6 +70,40 @@ def load_config(path=None, overrides=None):
         _deep_merge(cfg, user)
     if overrides:
         _deep_merge(cfg, overrides)
+    _coerce_numeric(cfg)
+    return cfg
+
+
+_FLOAT_FIELDS = ["latitude", "longitude", "hub_height_m", "rotor_diameter_m",
+                 "rated_power_kw", "cut_in_mps", "cut_out_mps",
+                 "air_pressure_kpa", "electrical_loss_pct", "other_loss_pct",
+                 "preconstruction_p50_gwh", "bin_width_mps", "sector_width_deg"]
+_INT_FIELDS = ["num_turbines", "min_bin_count", "n_free_turbines",
+               "csv_chunk_rows", "mc_iterations", "mc_seed",
+               "nasa_power_start_year", "era5_start_year", "era5_end_year",
+               "block_days"]
+_BOOL_FIELDS = ["air_density_correction", "use_float32"]
+
+
+def _coerce_numeric(cfg):
+    for k in _FLOAT_FIELDS:
+        v = cfg.get(k)
+        if v is not None and not isinstance(v, (int, float)):
+            try:
+                cfg[k] = float(v)
+            except (TypeError, ValueError):
+                raise ValueError(f"config field '{k}' must be numeric, got: {v!r}")
+    for k in _INT_FIELDS:
+        v = cfg.get(k)
+        if v is not None and not isinstance(v, int):
+            try:
+                cfg[k] = int(float(v))
+            except (TypeError, ValueError):
+                raise ValueError(f"config field '{k}' must be an integer, got: {v!r}")
+    for k in _BOOL_FIELDS:
+        v = cfg.get(k)
+        if isinstance(v, str):
+            cfg[k] = v.strip().lower() in ("1", "true", "yes", "on")
     return cfg
 
 
@@ -80,14 +117,18 @@ def _deep_merge(base, extra):
 
 def validate_config(cfg):
     problems = []
-    if not (cfg.get("rated_power_kw") and cfg["rated_power_kw"] > 0):
+    try:
+        _coerce_numeric(cfg)
+    except ValueError as e:
+        problems.append(str(e))
+    if not (cfg.get("rated_power_kw") and float(cfg["rated_power_kw"]) > 0):
         problems.append("rated_power_kw must be > 0")
-    if not (cfg.get("cut_in_mps", 0) < cfg.get("cut_out_mps", 1e9)):
+    if not (float(cfg.get("cut_in_mps", 0)) < float(cfg.get("cut_out_mps", 1e9))):
         problems.append("cut_in_mps must be < cut_out_mps")
-    if cfg.get("num_turbines") and cfg["num_turbines"] < 1:
+    if cfg.get("num_turbines") and int(cfg["num_turbines"]) < 1:
         problems.append("num_turbines must be >= 1")
     for key in ("electrical_loss_pct", "other_loss_pct"):
-        v = cfg.get(key, 0)
+        v = float(cfg.get(key, 0))
         if v < 0 or v > 50:
             problems.append(f"{key} must be between 0 and 50 %")
     # coordinates are REQUIRED for a proper long-term assessment

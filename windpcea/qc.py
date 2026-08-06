@@ -37,9 +37,9 @@ def _status_to_flag(status, cfg):
 
 def add_flags(df, cfg, v_arr, p_arr, interp_power):
     """Add flag + flag_reason columns to the long-format dataframe."""
-    rated = cfg["rated_power_kw"]
-    cut_in = cfg["cut_in_mps"]
-    cut_out = cfg["cut_out_mps"]
+    rated = float(cfg["rated_power_kw"])
+    cut_in = float(cfg["cut_in_mps"])
+    cut_out = float(cfg["cut_out_mps"])
     has_status = "status" in df.columns and df["status"].notna().any()
     if has_status and df["status"].nunique() < 2:
         has_status = False

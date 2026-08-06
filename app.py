@@ -263,7 +263,9 @@ def analyze():
                     colmap[key] = v
             if colmap:
                 overrides["column_map"] = colmap
-            cfg = cfg_mod.load_config(None, overrides)
+            # merge the form overrides ON TOP of the uploaded config file
+            # (previously load_config(None, ...) silently discarded the file)
+            cfg = cfg_mod.load_config(cfg_path, overrides)
             outdir = run_dir
 
         # very large files -> blockwise out-of-core mode (bounded memory)

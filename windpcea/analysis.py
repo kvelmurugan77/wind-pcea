@@ -274,7 +274,7 @@ def run_analysis(cfg, scada_path, outdir=None):
     cf = 100.0 * net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb * 8760.0)
     benchmark = None
     if cfg.get("preconstruction_p50_gwh"):
-        pre = cfg["preconstruction_p50_gwh"] * 1000.0
+        pre = float(cfg["preconstruction_p50_gwh"]) * 1000.0
         benchmark = {"preconstruction_p50_mwh": pre,
                      "assessment_p50_mwh": None,  # filled after MC
                      "ratio": None, "delta_pct": None}

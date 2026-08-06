@@ -117,6 +117,20 @@ def main():
         assert "curt_flag" in str(e)
         print("  OK  no_power_col -> informative error listing real columns")
 
+    # 10) string-typed numeric config must not crash (quoted JSON numbers)
+    d10 = b.head(5000)
+    import json as _json
+    _base = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
+    _s = {k: _base[k] for k in ("rated_power_kw", "hub_height_m",
+                                "electrical_loss_pct") if _base.get(k) is not None}
+    _s = {k: str(v) for k, v in _s.items()}
+    _s.update({"preconstruction_p50_gwh": "92", "latitude": 9.0,
+               "longitude": 77.8, "long_term_source": "measured_only"})
+    _p = os.path.join(TMP, "cfg_strings.json")
+    _json.dump(_s, open(_p, "w"))
+    _cfg = cfg_mod.load_config(_p)
+    run_case("string_config", d10, _cfg)
+
     print("\nAll robustness tests passed ✓")
 
 
