@@ -33,13 +33,15 @@ def base():
     return d
 
 
-def run_case(name, df):
+def run_case(name, df, cfg_overrides=None):
     os.makedirs(TMP, exist_ok=True)
     p = os.path.join(TMP, f"case_{name}.csv")
     df.to_csv(p, index=False)
     out = os.path.join(TMP, f"out_{name}")
     os.makedirs(out, exist_ok=True)
     cfg = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
+    if cfg_overrides:
+        cfg.update(cfg_overrides)
     r = run_analysis(cfg, p, outdir=out)
     html = build_html(r, out)
     assert os.path.exists(html) and os.path.getsize(html) > 10000, f"[{name}] report missing/small"
@@ -76,6 +78,22 @@ def main():
     # 5) tiny dataset (1 turbine, 2 days)
     d5 = b[b["turbine_id"] == "T01"].head(288)
     run_case("tiny", d5)
+
+    # 6) non-standard column names (no 'power'/'wind' words) — fallback detection
+    d6 = b.rename(columns={
+        "timestamp": "Date/Time", "turbine_id": "Unit",
+        "power_kw": "Output(MW)", "wind_speed_mps": "WS(m/s)",
+        "nacelle_dir_deg": "Dir(deg)", "temp_c": "AmbT(C)",
+        "status_code": "State"})
+    d6["Output(MW)"] = d6["Output(MW)"] / 1000.0     # MW -> kW scaling
+    run_case("custom_columns", d6)
+
+    # 7) manual column mapping (truly arbitrary names)
+    d7 = b.rename(columns={"timestamp": "TS", "turbine_id": "TID",
+                           "power_kw": "PWR", "wind_speed_mps": "VSPD"})
+    run_case("column_map_override", d7,
+             {"column_map": {"timestamp": "TS", "turbine": "TID",
+                             "power": "PWR", "ws": "VSPD"}})
 
     print("\nAll robustness tests passed ✓")
 

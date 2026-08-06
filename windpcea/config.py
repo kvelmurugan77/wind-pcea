@@ -20,6 +20,7 @@ DEFAULTS = {
     "turbine_id_pattern": None,    # regex to extract turbine id from columns (wide format)
     "oem_profile": "auto",         # auto | generic | vestas | sgre | suzlon | envision | nordex | goldwind | inox
     "column_aliases": {},          # optional extra column-name aliases per kind
+    "column_map": {},              # exact column names: {"power": "Active Power (kW)", "ws": "...", "turbine": "...", "timestamp": "...", "dir": "...", "temp": "...", "status": "..."}
     "csv_chunk_rows": 1000000,     # rows per chunk when streaming large CSVs
     "use_float32": False,          # halve numeric memory (slightly lower precision)
     "warranted_power_curve": None, # path to CSV: wind_speed_mps,power_kw

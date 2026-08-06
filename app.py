@@ -122,6 +122,25 @@ automatically when latitude/longitude are configured.</div>
 <label>Electrical losses (%)</label><input type="number" id="elec" value="2.0">
 </div>
 </div>
+<details style="margin-top:18px">
+<summary style="cursor:pointer;font-size:12.5px;color:var(--teal);font-weight:600">⚙ Advanced: manual column mapping (only if auto-detection fails)</summary>
+<div class="grid2" style="margin-top:8px">
+<div>
+<label>Power column</label><input type="text" id="power_col" placeholder="e.g. Active Power (kW)">
+<label>Wind speed column</label><input type="text" id="ws_col" placeholder="e.g. Wind Speed (m/s)">
+<label>Turbine column</label><input type="text" id="turbine_col" placeholder="e.g. Turbine Name">
+<label>Timestamp column</label><input type="text" id="ts_col" placeholder="e.g. Date/Time">
+</div>
+<div>
+<label>Direction column (optional)</label><input type="text" id="dir_col" placeholder="e.g. Nacelle Position">
+<label>Temperature column (optional)</label><input type="text" id="temp_col" placeholder="e.g. Ambient Temp">
+<label>Status column (optional)</label><input type="text" id="status_col" placeholder="e.g. State / Status Code">
+<label>Curtailment flag (optional)</label><input type="text" id="curt_col" placeholder="e.g. Curtailment Flag">
+</div>
+</div>
+<div class="hint">Type the EXACT column names from your file. Only fill the ones that failed
+auto-detection — the rest are detected automatically.</div>
+</details>
 <div style="margin-top:16px">
 <button class="btn" id="run" onclick="runAnalyze(false)">Run assessment</button>
 <button class="btn ghost" id="runsample" onclick="runAnalyze(true)" style="margin-left:10px">Run with bundled sample data</button>
@@ -149,11 +168,17 @@ async function runAnalyze(sample){
       const f = document.getElementById(id).files[0];
       if(f) fd.append(k, f);
     }
+    for(const id of ['power_col','ws_col','turbine_col','ts_col','dir_col','temp_col','status_col','curt_col']){
+      const v = document.getElementById(id).value.trim();
+      if(v) fd.append(id, v);
+    }
   }
   try{
     const r = await fetch('/analyze', {method:'POST', body: fd});
     const j = await r.json();
-    if(!r.ok){ st.innerHTML = '⚠ ' + (j.error || 'Analysis failed'); return; }
+    if(!r.ok){ st.innerHTML = '⚠ ' + (j.error || 'Analysis failed') +
+      '<br><span style="font-size:12px">Tip: if column detection failed, open ⚙ Advanced ' +
+      'above, type the exact column names from your file, and retry.</span>'; return; }
     st.innerHTML = '<span class="spin"></span>Done — opening report…';
     window.location.href = j.report_url;
   }catch(e){ st.innerHTML = '⚠ Network error: ' + e; }
@@ -216,6 +241,18 @@ def analyze():
             if lt:
                 overrides["long_term_wind_file"] = lt
                 overrides["long_term_source"] = "file"
+            # advanced: manual column mapping (only used when the user filled
+            # in at least one field)
+            colmap = {}
+            for key, field in [("power", "power_col"), ("ws", "ws_col"),
+                               ("turbine", "turbine_col"), ("timestamp", "ts_col"),
+                               ("dir", "dir_col"), ("temp", "temp_col"),
+                               ("status", "status_col"), ("curtailment", "curt_col")]:
+                v = request.form.get(field, "").strip()
+                if v:
+                    colmap[key] = v
+            if colmap:
+                overrides["column_map"] = colmap
             cfg = cfg_mod.load_config(None, overrides)
             outdir = run_dir
 

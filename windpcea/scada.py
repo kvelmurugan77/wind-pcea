@@ -12,12 +12,21 @@ Suzlon, Envision, Nordex, Goldwind, Inox ...) via the profiles in oem.py:
   * power reported in MW instead of kW
   * Chinese column headers (有功功率, 风速, ...)
 """
+import re
+
 import numpy as np
 import pandas as pd
 
 from . import oem
 
 TS_ALIASES = ["timestamp", "datetime", "date time", "time stamp", "date", "time"]
+
+# fallback patterns for non-standard column names (most specific first)
+POWER_FALLBACK = ["active power", "active_power", "activepower", "gen power",
+                  "gen_power", "genpower", "power output", "power_output",
+                  "poweroutput", "output", "power", "pavg", "kw", "mw"]
+WS_FALLBACK = ["wind speed", "wind_speed", "windspeed", "windspd", "wind",
+               "ws", "vavg", "v_avg"]
 
 
 def _to_numeric_with_euro(df_col):
@@ -57,7 +66,9 @@ def _find_col(df, aliases, exclude=None):
 def _split_wide_column(name, aliases):
     """For 'T01 Active Power (kW)': return (turbine_id, kind).
 
-    Returns (None, None) if the column carries no turbine prefix.
+    Returns (None, None) if the column carries no turbine prefix. Also handles
+    compact names like 'T01-P(kW)' / 'T01_WS' / 'T02风速' by stripping the
+    trailing unit and matching a short alias at the end of the name.
     """
     norm = oem.normalize_col_name(name)
     pairs = []
@@ -73,11 +84,27 @@ def _split_wide_column(name, aliases):
             tid = norm[:i].strip(" _-.:/")
             if tid:
                 return tid, kind
+    # compact fallback: strip trailing unit, match short alias at the end
+    norm2 = re.sub(r"(kwh|mwh|kw|mw|kmh|km/h|m/s|deg|c)$", "", norm)
+    for na, kind in [("power", "power"), ("p", "power"),
+                     ("windspeed", "ws"), ("wind", "ws"), ("ws", "ws"), ("v", "ws"),
+                     ("direction", "dir"), ("dir", "dir"), ("d", "dir"),
+                     ("temperature", "temp"), ("temp", "temp"), ("t", "temp"),
+                     ("status", "status"), ("state", "status")]:
+        if norm2.endswith(na) and len(norm2) > len(na):
+            tid = norm2[:-len(na)].strip(" _-.:/")
+            if tid:
+                return tid, kind
     return None, None
 
 
-def standardize(df, profile_key="auto", column_overrides=None):
+def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
     """Standardize a raw dataframe into long format with known column names.
+
+    column_map: optional dict of {'power': 'My Power Col', 'ws': ...,
+    'turbine': ..., 'timestamp': ..., 'dir': ..., 'temp': ..., 'status': ...,
+    'curtailment': ...} with the exact column names in the file. When given,
+    those columns are used directly and override auto-detection.
 
     Returns (df_long, resolved_profile_key).
     """
@@ -87,6 +114,40 @@ def standardize(df, profile_key="auto", column_overrides=None):
     if profile_key in (None, "auto"):
         profile_key = oem.detect_profile(df.columns, column_overrides)
     aliases = oem.profile_aliases(profile_key, column_overrides)
+
+    # ---- explicit column mapping (user-provided) --------------------------
+    if column_map:
+        canon = {"timestamp": "timestamp", "turbine": "turbine_id", "power": "power_kw",
+                 "ws": "wind_speed_mps", "dir": "nacelle_dir_deg", "temp": "temp_c",
+                 "status": "status_code", "curtailment": "curt_flag"}
+        for key, col in column_map.items():
+            if not col or col not in df.columns or key not in canon:
+                continue
+            target = canon[key]
+            src = df[col]
+            if key == "power":
+                vals = _to_numeric_with_euro(src)
+                if "mw" in str(col).lower():
+                    vals = vals * 1000.0
+            elif key == "ws":
+                vals = _to_numeric_with_euro(src)
+                if "km/h" in str(col).lower() or "kmh" in str(col).lower():
+                    vals = vals / 3.6
+            elif key == "status":
+                vals = _status_to_numeric(src)
+            elif key == "curtailment":
+                vals = (pd.to_numeric(src, errors="coerce") > 0).astype(int)
+            elif key == "timestamp":
+                vals = src            # parsed in the timestamp section below
+            elif key == "turbine":
+                vals = src.astype(str)  # keep turbine ids as strings
+            else:
+                vals = _to_numeric_with_euro(src)
+            df[target] = vals
+            if col != target and col in df.columns:
+                df = df.drop(columns=[col])
+        profile_key = "generic"
+        aliases = oem.profile_aliases("generic", column_overrides)
 
     # ---- timestamp -----------------------------------------------------
     # prefer combined datetime columns; only fall back to separate
@@ -117,10 +178,13 @@ def standardize(df, profile_key="auto", column_overrides=None):
 
     # ---- turbine column (long format) ------------------------------------
     # find the status column first and exclude it from the turbine search,
-    # otherwise "TurbineState" can match the turbine alias "turbine"
-    status_col = _find_col(df, aliases["status"])
+    # otherwise "TurbineState" can match the turbine alias "turbine".
+    # Turbine/status aliases are the union across ALL profiles so columns like
+    # "Unit" are recognised no matter which profile was auto-detected.
+    status_col = _find_col(df, oem.all_aliases("status") + aliases["status"])
     exclude_turb = {status_col} if status_col else None
-    turb_col = _find_col(df, aliases["turbine"], exclude=exclude_turb)
+    turb_col = _find_col(df, oem.all_aliases("turbine") + aliases["turbine"],
+                         exclude=exclude_turb)
     is_long = turb_col is not None
 
     if not is_long:
@@ -206,14 +270,45 @@ def standardize(df, profile_key="auto", column_overrides=None):
             df["curt_flag"] = (pd.to_numeric(df[ccol], errors="coerce") > 0).astype(int)
             df = df.drop(columns=[ccol])
 
+    # ---- fallback detection for non-standard column names ------------------
+    # (must run BEFORE the keep-list filter, which drops non-canonical names)
+    if "power_kw" not in df.columns:
+        pcol = _fallback_find(df, POWER_FALLBACK)
+        if pcol:
+            vals = _to_numeric_with_euro(df[pcol])
+            if "mw" in pcol.lower():
+                vals = vals * 1000.0
+            df["power_kw"] = vals
+            if pcol != "power_kw":
+                df = df.drop(columns=[pcol])
+    if "ws" not in df.columns:
+        wcol = _fallback_find(df, WS_FALLBACK)
+        if wcol:
+            vals = _to_numeric_with_euro(df[wcol])
+            if "km/h" in wcol.lower() or "kmh" in wcol.lower():
+                vals = vals / 3.6
+            df["ws"] = vals
+            if wcol != "ws":
+                df = df.drop(columns=[wcol])
+
     keep = [c for c in ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
                         "temp_c", "status", "curt_flag"] if c in df.columns]
     df = df[keep].dropna(subset=["timestamp"]).sort_values(["turbine", "timestamp"])
 
     if "power_kw" not in df.columns:
-        raise ValueError("No power column found. Provide a column containing 'power' (kW).")
+        raise ValueError(
+            "No power column found. Columns in file: "
+            + ", ".join(str(c) for c in df.columns[:30])
+            + ". Expected a column containing 'power' (kW or MW), e.g. 'Active Power (kW)'. "
+              "If your file uses a custom name, use the Advanced column mapping "
+              "(or 'column_map' in the config) to specify it.")
     if "ws" not in df.columns:
-        raise ValueError("No wind speed column found. Provide a column containing 'wind_speed' (m/s).")
+        raise ValueError(
+            "No wind speed column found. Columns in file: "
+            + ", ".join(str(c) for c in df.columns[:30])
+            + ". Expected a column containing 'wind speed' (m/s). "
+              "If your file uses a custom name, use the Advanced column mapping "
+              "(or 'column_map' in the config) to specify it.")
 
     df["power_kw"] = pd.to_numeric(df["power_kw"], errors="coerce")
     df["ws"] = pd.to_numeric(df["ws"], errors="coerce")
@@ -321,7 +416,8 @@ def _needed_columns(columns, aliases):
     needed = []
     ts_aliases = ["timestamp", "datetime", "date time", "time stamp"] + aliases["timestamp"]
     signal = (aliases["power"] + aliases["ws"] + aliases["dir"] + aliases["temp"]
-              + aliases["status"] + ["curtail", "derat", "power limit", "limit"])
+              + aliases["status"] + ["curtail", "derat", "power limit", "limit"]
+              + POWER_FALLBACK + WS_FALLBACK)
     for c in columns:
         nc = oem.normalize_col_name(c)
         if not nc:
@@ -329,7 +425,7 @@ def _needed_columns(columns, aliases):
         if _matches(nc, ts_aliases):
             needed.append(c)
             continue
-        if _matches(nc, aliases["turbine"]):
+        if _matches(nc, oem.all_aliases("turbine") + aliases["turbine"]):
             needed.append(c)
             continue
         if _matches(nc, signal):
@@ -341,7 +437,20 @@ def _needed_columns(columns, aliases):
     return needed
 
 
-def _load_csv_chunked(path, profile_key, column_overrides, chunksize, use_float32):
+def _fallback_find(df, patterns):
+    """Find a column whose (normalised) name contains any pattern."""
+    for p in patterns:
+        np_ = oem.normalize_col_name(p)
+        if not np_:
+            continue
+        for col in df.columns:
+            if np_ in oem.normalize_col_name(col):
+                return col
+    return None
+
+
+def _load_csv_chunked(path, profile_key, column_overrides, chunksize, use_float32,
+                      column_map=None):
     """Stream a (possibly huge) CSV in chunks.
 
     Only the needed columns are read; each chunk is standardised to long
@@ -352,13 +461,16 @@ def _load_csv_chunked(path, profile_key, column_overrides, chunksize, use_float3
     if profile_key in (None, "auto"):
         profile_key = oem.detect_profile(columns, column_overrides)
     aliases = oem.profile_aliases(profile_key, column_overrides)
-    usecols = _needed_columns(columns, aliases)
+    if column_map:
+        usecols = list(column_map.values())
+    else:
+        usecols = _needed_columns(columns, aliases)
 
     reader = pd.read_csv(path, usecols=usecols, chunksize=chunksize, **kw)
     parts = []
     n_chunks = 0
     for chunk in reader:
-        dfc, _ = standardize(chunk, profile_key, column_overrides)
+        dfc, _ = standardize(chunk, profile_key, column_overrides, column_map=column_map)
         parts.append(dfc)
         n_chunks += 1
     if not parts:
@@ -371,7 +483,7 @@ def _load_csv_chunked(path, profile_key, column_overrides, chunksize, use_float3
     return df, profile_key, n_chunks
 
 
-def load_scada(path, profile_key="auto", column_overrides=None,
+def load_scada(path, profile_key="auto", column_overrides=None, column_map=None,
                chunksize=1_000_000, use_float32=False):
     """Load a SCADA file (CSV / Parquet / Excel), standardise and resample.
 
@@ -389,21 +501,24 @@ def load_scada(path, profile_key="auto", column_overrides=None,
         read_info["input_rows"] = int(len(raw))
         try:
             df, resolved = standardize(raw, profile_key=profile_key,
-                                       column_overrides=column_overrides)
+                                       column_overrides=column_overrides,
+                                       column_map=column_map)
         except ValueError:
             raise ValueError("Could not parse Excel SCADA file: expected a sheet "
                              "with timestamp, turbine and power/wind-speed columns")
     elif lower.endswith(".parquet"):
         try:
             df, resolved = standardize(pd.read_parquet(path), profile_key=profile_key,
-                                       column_overrides=column_overrides)
+                                       column_overrides=column_overrides,
+                                       column_map=column_map)
         except ImportError:
             raise ValueError("Parquet support requires pyarrow: pip install pyarrow")
         read_info["method"] = "parquet"
     else:
         try:
             df, resolved, n_chunks = _load_csv_chunked(
-                path, profile_key, column_overrides, chunksize, use_float32)
+                path, profile_key, column_overrides, chunksize, use_float32,
+                column_map=column_map)
             read_info["method"] = f"streamed ({n_chunks} chunk{'s' if n_chunks > 1 else ''})"
             read_info["chunks"] = n_chunks
         except ValueError as e:

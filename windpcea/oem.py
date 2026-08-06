@@ -169,6 +169,16 @@ def profile_aliases(profile_key, overrides=None):
     return aliases
 
 
+def all_aliases(kind):
+    """Union of an alias kind across ALL profiles (used for the turbine and
+    status columns, where a column like 'Unit' must be recognised regardless
+    of which OEM profile was auto-detected)."""
+    out = []
+    for prof in OEM_PROFILES.values():
+        out.extend(prof.get(kind, []))
+    return list(dict.fromkeys(out))
+
+
 def detect_profile(columns, overrides=None):
     """Pick the OEM profile whose aliases match the most columns."""
     cols = [normalize_col_name(c) for c in columns]

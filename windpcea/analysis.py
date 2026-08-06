@@ -75,6 +75,7 @@ def run_analysis(cfg, scada_path, outdir=None):
         scada_path,
         profile_key=cfg.get("oem_profile", "auto"),
         column_overrides=cfg.get("column_aliases"),
+        column_map=cfg.get("column_map") or None,
         chunksize=int(cfg.get("csv_chunk_rows", 1_000_000)),
         use_float32=bool(cfg.get("use_float32", False)))
     if df.empty:
