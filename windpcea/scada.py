@@ -26,9 +26,13 @@ POWER_FALLBACK = ["active power", "active_power", "activepower", "gen power",
                   "gen_power", "genpower", "power output", "power_output",
                   "poweroutput", "output", "power", "pavg", "kw", "mw",
                   "active", "real power", "realpower", "gen", "generator",
-                  "pwr", "pgen", "ptot", "total", "ep"]
+                  "pwr", "pgen", "ptot", "total", "ep",
+                  # Envision truncated headers (10-char channel names)
+                  "grd_prod", "grid_prod", "gridprod", "grprod", "gprod",
+                  "prod", "prod_lat"]
 WS_FALLBACK = ["wind speed", "wind_speed", "windspeed", "windspd", "wind",
-               "ws", "vavg", "v_avg", "wsavg", "ws_avg"]
+               "ws", "vavg", "v_avg", "wsavg", "ws_avg",
+               "amb_wind"]
 
 
 def _to_numeric_with_euro(df_col):

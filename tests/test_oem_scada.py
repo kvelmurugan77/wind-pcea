@@ -168,6 +168,25 @@ def main():
         f.write("\n".join(lines + body))
     check("preamble.csv", scada.load_scada(p), 12, pmax=base_mp * 1.1)
 
+    # 10) Envision truncated 10-char headers (real-world export style):
+    #     PCTimeSt, AssetNam, Amb_Tems, Amb_Wind, Grd_Prod_, Nac_Direc,
+    #     Nac_Temp, Sys_Stats_ — Grd_Prod_ is the power column
+    t = pd.DataFrame({
+        "PCTimeSt": base["timestamp"],
+        "AssetNam": base["turbine_id"],
+        "Amb_Tems": base["temp_c"],
+        "Amb_Wind": base["wind_speed_mps"],
+        "Grd_Prod_": base["power_kw"],
+        "Nac_Direc": base["nacelle_dir_deg"],
+        "Nac_Temp": base["temp_c"],
+        "Sys_Stats_": base["status_code"],
+    })
+    dft, proft = check("envision_truncated.csv",
+                       scada.load_scada(write_tmp("envision_truncated.csv", t)), 12,
+                       pmax=base_mp * 1.1)
+    assert proft == "envision", f"envision truncated detected as {proft}"
+    assert "dir_deg" in dft.columns and "status" in dft.columns
+
     print("\nAll OEM compatibility tests passed ✓")
 
 
