@@ -86,6 +86,9 @@ _BOOL_FIELDS = ["air_density_correction", "use_float32"]
 
 
 def _coerce_numeric(cfg):
+    """Coerce known numeric fields AND any numeric-looking string anywhere in
+    the config (deep). This makes hand-edited configs with quoted numbers
+    ('"rated_power_kw": "3450"') impossible to crash arithmetic with."""
     for k in _FLOAT_FIELDS:
         v = cfg.get(k)
         if v is not None and not isinstance(v, (int, float)):
@@ -104,7 +107,34 @@ def _coerce_numeric(cfg):
         v = cfg.get(k)
         if isinstance(v, str):
             cfg[k] = v.strip().lower() in ("1", "true", "yes", "on")
+    _coerce_deep(cfg)
     return cfg
+
+
+def _coerce_deep(node):
+    """Recursively convert any string that is fully a number to float/int.
+    Strings like 'auto', 'file', 'T01F', paths and names are untouched."""
+    if isinstance(node, dict):
+        for k in list(node.keys()):
+            node[k] = _coerce_deep(node[k])
+    elif isinstance(node, list):
+        for i in range(len(node)):
+            node[i] = _coerce_deep(node[i])
+    elif isinstance(node, str):
+        s = node.strip()
+        if not s:
+            return node
+        s_num = s[1:] if s[0] in "+-" else s
+        if s_num and s_num.replace(".", "", 1).replace("e", "", 1).isdigit() \
+                and s_num.count(".") <= 1:
+            try:
+                f = float(node)
+                if f == int(f) and "." not in s_num and "e" not in s_num.lower():
+                    return int(f)
+                return f
+            except ValueError:
+                pass
+    return node
 
 
 def _deep_merge(base, extra):

@@ -291,7 +291,9 @@ def scan_scada(path, profile_key, column_overrides, column_map):
 
 def run_blockwise(cfg, scada_path, outdir=None, block_days=None):
     from .analysis import load_warranted_curve
+    from . import config as cfg_mod
 
+    cfg_mod.validate_config(cfg)   # numeric coercion + required fields
     if outdir:
         os.makedirs(outdir, exist_ok=True)
 

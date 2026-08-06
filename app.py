@@ -287,8 +287,11 @@ def analyze():
                         "summary": _quick_summary(results)})
     except Exception as e:
         import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        tb = traceback.format_exc()
+        print(tb)
+        # include the last traceback lines so the user can report the cause
+        last = tb.strip().splitlines()[-4:]
+        return jsonify({"error": str(e), "trace": last}), 500
 
 
 def _quick_summary(r):
