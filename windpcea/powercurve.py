@@ -109,7 +109,12 @@ def aep_from_weibull(A, k, v_arr, p_arr, hours=8760.0):
     v = np.linspace(0.05, np.max(v_arr) - 0.05, 2000)
     pdf = weibull_pdf(v, A, k)
     p = np.interp(v, v_arr, p_arr)
-    return float(hours * np.trapz(pdf * p, v) / 1000.0)
+    # trapezoidal integration — manual, so it works on any NumPy version
+    # (np.trapz was removed in NumPy 2.0)
+    integrand = pdf * p
+    integral = float(np.sum((integrand[1:] + integrand[:-1]) * 0.5
+                            * (v[1:] - v[:-1])))
+    return hours * integral / 1000.0
 
 
 def aep_from_timeseries(ws, v_arr, p_arr, dt_h):

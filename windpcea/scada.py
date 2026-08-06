@@ -324,6 +324,13 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
     df = df[keep].dropna(subset=["timestamp"]).sort_values(["turbine", "timestamp"])
 
     if "power_kw" not in df.columns:
+        canon_missing = set(["timestamp", "turbine", "ws"]) <= set(df.columns)
+        if canon_missing:
+            raise ValueError(
+                "This file appears to be in WindPCEA's internal format but has "
+                "NO power column — power_kw is missing, so energy yield cannot "
+                "be computed. Upload the ORIGINAL OEM export (e.g. Envision "
+                "with 'Grd_Prod_' = power), or add the power column to this file.")
         raise ValueError(
             "No power column found. Columns in file: "
             + ", ".join(str(c) for c in df.columns[:30])
