@@ -289,6 +289,33 @@ warranted curve is computed over the measured operating wind distribution.</p>
     parts.append(_chart(lambda: pl.fig_to_b64(pl.power_curves(
         pc["farm_curve"], pc["warranted_curve"], cfg["rated_power_kw"])), "Power curve",
         "Power curve chart unavailable (insufficient operating data)"))
+    if pc.get("per_turbine_curves"):
+        parts.append(_chart(lambda: pl.fig_to_b64(pl.turbine_curves_overlay(
+            pc["per_turbine_curves"], pc["farm_curve"], pc["warranted_curve"],
+            cfg["rated_power_kw"])), "Turbine curves overlay",
+            "Per-turbine curve overlay unavailable"))
+    # binned comparison table: measured vs warranted per 0.5 m/s bin
+    pw_arr = np.interp(pc["farm_curve"]["bin_center"],
+                       pc["warranted_curve"]["bin_center"],
+                       pc["warranted_curve"]["mean_power"])
+    bt = pd.DataFrame({
+        "wind_speed_bin": pc["farm_curve"]["bin_center"],
+        "records": pc["farm_curve"]["count"],
+        "measured_kw": pc["farm_curve"]["mean_power"].round(1),
+        "warranted_kw": pw_arr.round(1),
+        "delta_kw": (pc["farm_curve"]["mean_power"] - pw_arr).round(1),
+    })
+    bt["delta_pct"] = (100.0 * bt["delta_kw"] / bt["warranted_kw"].clip(lower=1)).round(1)
+    bt = bt[(bt["wind_speed_bin"] >= cfg["cut_in_mps"]) & (bt["wind_speed_bin"] <= 25.5)]
+    parts.append(html_table(
+        bt[bt["records"] > 0],
+        formats={"records": lambda v: _fmt(v, 0),
+                 "measured_kw": lambda v: _fmt(v, 0),
+                 "warranted_kw": lambda v: _fmt(v, 0),
+                 "delta_kw": lambda v: f"{v:+.0f}",
+                 "delta_pct": lambda v: f"{v:+.1f}%"},
+        caption="Farm power curve — measured vs warranted per 0.5 m/s bin "
+                "(positive delta = underperformance)"))
     parts.append(html_table(
         pc["per_turbine"].round(4),
         formats={"deviation_pct": lambda v: _pct(v, 2),
@@ -351,10 +378,68 @@ and a long-term Weibull wind distribution is fitted to the predicted long-term d
                                          "intercept": lambda v: f"{v:.4f}", "r2": lambda v: f"{v:.3f}"},
                                 caption="MCP regression statistics per sector"))
 
+    # ---- production-based LT assessment (Method B) ---------------------
+    prod = cl.get("production")
+    parts.append("<h3>6.1&nbsp;&nbsp;Production-based long-term assessment (energy vs wind regression)</h3>")
+    parts.append("""<p class="lead">In addition to the Weibull × warranted-curve method (Section 7),
+the measured <b>gross energy vs wind-speed relationship</b> is established directly — daily farm gross
+energy vs daily site wind speed, and (when ≥ 6 months are available) monthly farm gross energy vs the
+long-term reference monthly wind speed. The fitted relationship is then applied to the full long-term
+record to predict the long-term energy series; its annualised sum is the long-term gross AEP.</p>""")
+    if prod is None or (not prod.get("daily") and not prod.get("monthly")):
+        note = (prod or {}).get("note", "insufficient measured data (need ≥ 3 months "
+                                         "with valid wind and energy)")
+        parts.append(f"""<div class="note"><b>Production-based assessment not available:</b> {note}
+The Weibull × warranted-curve method (Method A) is used for the gross AEP.</div>""")
+    else:
+        if prod.get("daily"):
+            d = prod["daily"]
+            if d["fit"]["kind"] in ("power_law", "cubic"):
+                eq = f"E<sub>day</sub> = {d['fit']['c']:.2f} × WS<sup>{d['fit']['b']:.2f}</sup>"
+            else:
+                eq = (f"E<sub>day</sub> = {d['fit']['b']:.3f} × WS "
+                      f"{'−' if d['fit']['a'] < 0 else '+'} {abs(d['fit']['a']):.0f}")
+            parts.append(f"""<div class="grid2">
+<div>{_chart(lambda: pl.fig_to_b64(pl.prod_scatter(
+    d['measured'], d['wind'], d['fit'], 'Daily gross energy vs daily site wind',
+    'Daily site wind speed (m/s)', 'Daily farm gross energy (MWh)')), 'Daily energy vs wind',
+    'Daily scatter unavailable')}</div>
+<div>{_chart(lambda: pl.fig_to_b64(pl.lt_predicted_series(
+    d['lt_predicted'], cl['lt_n_years'], 'Long-term predicted daily energy',
+    'Energy (MWh/day)')), 'LT predicted daily energy', 'LT series unavailable')}</div></div>
+<div class="note"><b>Daily production regression:</b> {eq} MWh, R² = {d['fit']['r2']:.2f}
+(n = {d['fit']['n']} days) → LT annual gross <b>{_fmt(d['lt_annual_gross_mwh'])} MWh/yr</b>
+(applied to {cl['lt_n_years']:.1f} years of long-term daily wind).{(' <b style="color:#C0504D">' + d['unreliable_reason'] + '</b>') if d.get('unreliable') else ''}</div>""")
+        if "monthly" in prod:
+            m = prod["monthly"]
+            parts.append(f"""<div class="grid2">
+<div>{_chart(lambda: pl.fig_to_b64(pl.prod_scatter(
+    m['measured'], m['wind'], m['fit'], 'Monthly gross energy vs reference wind',
+    'Monthly reference wind speed (m/s)', 'Monthly farm gross energy (MWh, 30-day norm.)')), 'Monthly energy vs wind',
+    'Monthly scatter unavailable')}</div>
+<div>{_chart(lambda: pl.fig_to_b64(pl.lt_predicted_series(
+    m['lt_predicted'], cl['lt_n_years'], 'Long-term predicted monthly energy',
+    'Energy (MWh/month)')), 'LT predicted monthly energy', 'LT monthly series unavailable')}</div></div>
+<div class="note"><b>Monthly production regression:</b> E<sub>m</sub> = {m['fit']['b']:.3f} × WS_ref
+{'−' if m['fit']['a'] < 0 else '+'} {abs(m['fit']['a']):.0f} MWh (30-day normalised),
+R² = {m['fit']['r2']:.2f} (n = {m['fit']['n']} months) → LT annual gross
+<b>{_fmt(m['lt_annual_gross_mwh'])} MWh/yr</b>.{(' <b style="color:#C0504D">' + m['unreliable_reason'] + '</b>') if m.get('unreliable') else ''}</div>""")
+        used = (f"{_fmt(gross_lt)} MWh/yr ({r['losses']['lt_method_used']})"
+                if prod.get("lt_gross_mwh") else
+                f"{_fmt(gross_lt)} MWh/yr ({r['losses']['lt_method_used']}) — "
+                f"Method B indicative only (record covers {prod.get('record_months', 0):.1f} months "
+                f"of a full seasonal cycle; < 9 months)")
+        parts.append(f"""<div class="note ok"><b>Method comparison:</b> Weibull × warranted curve
+(Method A) = {_fmt(r['losses']['gross_lt_mwh_method_a'])} MWh/yr · production regression
+(Method B{', ' + prod['primary'] if prod.get('primary') else ''}) =
+{_fmt(prod.get('lt_gross_mwh') or r['losses']['gross_lt_mwh_method_b'])} MWh/yr ·
+<b>used for the loss tree: {used}</b>.</div>""")
+
     # ---------------- loss tree ----------------
     parts.append("<h2>7&nbsp;&nbsp;Loss tree &amp; net energy yield</h2>")
-    parts.append(f"""<p class="lead">Gross AEP (long-term) = {_fmt(gross_lt)} MWh/yr is derived from the
-long-term Weibull distribution and the warranted power curve. Losses measured over the SCADA period
+    parts.append(f"""<p class="lead">Gross AEP (long-term) = {_fmt(gross_lt)} MWh/yr is obtained by the
+<b>{r['losses']['lt_method_used']}</b> method (see §6.1 for the production-regression method and its
+cross-check against the Weibull × warranted-curve method). Losses measured over the SCADA period
 (availability, curtailment, wake, performance, …) plus electrical and other losses are applied to give
 the net energy yield.</p>""")
     parts.append(f"""<div class="note"><b>How the long-term energy yield is calculated</b>
@@ -362,10 +447,13 @@ the net energy yield.</p>""")
 <li><b>1. Long-term wind climate (MCP):</b> daily site-mean wind speed is regressed on the long-term
 reference per 30° sector (OLS); the long-term daily series is predicted and converted to a Weibull
 distribution — shape k from the measured record, scale A adjusted to the long-term mean wind speed.</li>
-<li><b>2. Gross AEP</b> (per turbine, per year):<br>
-<span class="formula">E<sub>gross</sub> = 8760 h × ∫<sub>0</sub><sup>∞</sup> f(v; A, k) · P<sub>warr</sub>(v) dv,
-&nbsp; f(v; A, k) = (k/A)·(v/A)<sup>k−1</sup>·exp(−(v/A)<sup>k</sup>)</span>
-integrated numerically (trapezoidal) from cut-in to cut-out; then × N<sub>turbines</sub>.</li>
+<li><b>2. Gross AEP — two methods, cross-checked:</b><br>
+<span class="formula">Method A (curve):&nbsp; E<sub>gross</sub> = 8760 h × ∫<sub>0</sub><sup>∞</sup> f(v; A, k) · P<sub>warr</sub>(v) dv
+&nbsp;→ {_fmt(r['losses']['gross_lt_mwh_method_a'])} MWh/yr</span>
+<span class="formula">Method B (production regression, §6.1):&nbsp; E<sub>day/m</sub> = a + b·WS applied to the
+long-term wind record &nbsp;→ {_fmt(r['losses']['gross_lt_mwh_method_b'])} MWh/yr</span>
+Method B is used as primary when its fit is adequate (R² ≥ 0.5 monthly / daily fallback); both are
+always reported and compared.</li>
 <li><b>3. Loss tree:</b> each loss l<sub>i</sub> is applied multiplicatively:<br>
 <span class="formula">E<sub>net</sub> = E<sub>gross</sub> × (1 − l<sub>avail</sub>) × (1 − l<sub>curt</sub>) × (1 − l<sub>derate</sub>)
 × (1 − l<sub>env</sub>) × (1 − l<sub>wake</sub>) × (1 − l<sub>perf</sub>) × (1 − l<sub>elec</sub>) × (1 − l<sub>other</sub>)</span>
@@ -374,8 +462,8 @@ SCADA period; electrical and other losses are inputs.</li>
 <li><b>4. P-values:</b> Monte Carlo ({cfg['mc_iterations']:,} draws) applies lognormal 1σ uncertainty
 components; P50/P75/P90/P99 are quantiles of the resulting net-AEP distribution.</li>
 </ul>
-<b>In this run:</b> A = {r['climate']['lt_weibull'][0]:.2f} m/s, k = {r['climate']['lt_weibull'][1]:.2f}
-→ gross {_fmt(gross_lt)} MWh/yr → {_pct(tree['pct_of_gross'].sum())} losses
+<b>In this run:</b> gross {_fmt(gross_lt)} MWh/yr ({r['losses']['lt_method_used']})
+→ {_pct(tree['pct_of_gross'].sum())} losses
 → deterministic net {_fmt(unc['deterministic_net_mwh'])} MWh/yr → P50 {_fmt(p['P50'])} MWh/yr.
 Full derivation in Appendix B.</div>""")
     parts.append(_chart(lambda: pl.fig_to_b64(pl.loss_waterfall(
@@ -444,23 +532,31 @@ E<sub>act</sub> = {_fmt(e_act)} MWh, downtime loss E<sub>down</sub> = {_fmt(e_do
 {_pct(avail['prod_avail_pct'],2)}).</p>""")
 
     parts.append(f"""<h2>Appendix B — Long-term energy yield: calculation details</h2>
-<p class="lead"><b>Step 1 — Long-term wind climate (MCP).</b> Daily farm-mean wind speeds from nacelle
+<p class="lead"><b>Step 0 — Long-term wind climate (MCP).</b> Daily farm-mean wind speeds from nacelle
 anemometry (mean across operating turbines) are regressed per 30° direction sector on the long-term
 reference ({lt['method']}, {lt['lt_n_years']:.1f} years) by ordinary least squares. The regressions map
-the reference onto the site for the full long-term period. The long-term Weibull distribution is then</p>
+the reference onto the site for the full long-term period, giving a long-term daily site wind series.
+The long-term Weibull distribution is then</p>
 <div class="formula">k<sub>LT</sub> = k<sub>measured record</sub>
 &nbsp;&nbsp;(&nbsp;shape is a site characteristic, taken from the measured 10-min record&nbsp;)<br>
 A<sub>LT</sub> = A<sub>measured</sub> × μ<sub>LT</sub> / μ<sub>measured</sub>
 &nbsp;&nbsp;(&nbsp;scale adjusted so the distribution matches the long-term mean wind speed&nbsp;)</div>
-<p class="lead"><b>Step 2 — Gross AEP</b> (per turbine per year), numerically integrated (trapezoidal,
-0.05 m/s grid) from cut-in to cut-out with P = 0 above cut-out:</p>
+<p class="lead"><b>Step 1 — Gross AEP, Method A (Weibull × warranted curve).</b> Per turbine per year,
+numerically integrated (trapezoidal, 0.05 m/s grid) from cut-in to cut-out with P = 0 above cut-out:</p>
 <div class="formula">E<sub>gross,1</sub> = 8760 h × ∫<sub>0</sub><sup>∞</sup> f(v; A<sub>LT</sub>, k<sub>LT</sub>) · P<sub>warr</sub>(v) dv
 &nbsp;&nbsp;&nbsp;f(v; A, k) = (k/A)·(v/A)<sup>k−1</sup>·e<sup>−(v/A)<sup>k</sup></sup></div>
-<p class="lead"><b>Step 3 — Losses.</b> SCADA-derived losses (as % of gross energy over the measured
-period) plus the electrical/other inputs are applied multiplicatively:</p>
+<p class="lead"><b>Step 1b — Gross AEP, Method B (production regression, §6.1).</b> The measured
+<b>gross daily energy</b> (warranted-curve energy at measured wind over all plausible records =
+actual + downtime + curtailment + derating + environmental) is regressed on the daily site wind
+speed; with ≥ 6 months of data the <b>gross monthly energy</b> (30.44-day normalised) is regressed
+on the long-term reference monthly wind speed. The fitted relationship is applied to the full
+long-term wind record and annualised:</p>
+<div class="formula">E<sub>gross,LT</sub> = Σ<sub>LT</sub> (a + b·WS<sub>t</sub>) / N<sub>years</sub></div>
+<p class="lead"><b>Step 2 — Losses.</b> SCADA-derived losses (as % of gross energy over the measured
+period) plus the electrical/other inputs are applied multiplicatively to the chosen gross AEP:</p>
 <div class="formula">E<sub>net</sub> = E<sub>gross</sub> × Π<sub>i</sub> (1 − l<sub>i</sub>) &nbsp; with
 l<sub>i</sub> = availability, curtailment, derating, environmental, wake, performance, electrical, other</div>
-<p class="lead"><b>Step 4 — P-values.</b> A Monte Carlo simulation ({cfg['mc_iterations']:,} draws)
+<p class="lead"><b>Step 3 — P-values.</b> A Monte Carlo simulation ({cfg['mc_iterations']:,} draws)
 applies a lognormal multiplier to each component (1σ<sub>i</sub>); combined
 1σ = √(Σ σ<sub>i</sub>²) = {_pct(combined_sigma,2)}. P50 equals the deterministic net yield
 (lognormal median), P90 ≈ P50 · e<sup>−1.282σ</sup>, P75 ≈ P50 · e<sup>−0.674σ</sup>.</p>""")
@@ -555,6 +651,10 @@ def export_excel(r, outdir):
             ("Long-term mean wind speed (m/s)", round(r["climate"]["lt_mean_ws"], 2)),
             ("Long-term Weibull A (m/s)", round(r["climate"]["lt_weibull"][0], 2)),
             ("Long-term Weibull k", round(r["climate"]["lt_weibull"][1], 2)),
+            ("Gross AEP - Method A (Weibull x curve, MWh/yr)", round(r["losses"]["gross_lt_mwh_method_a"], 0)),
+            ("Gross AEP - Method B (production regression, MWh/yr)",
+             round(r["losses"]["gross_lt_mwh_method_b"], 0) if r["losses"]["gross_lt_mwh_method_b"] else None),
+            ("LT method used", r["losses"]["lt_method_used"]),
         ]
         if r["benchmark"]:
             b = r["benchmark"]
@@ -620,7 +720,8 @@ def console_summary(r):
         f"Wake loss: {r['wake']['wake_loss_pct']:.2f}%",
         f"  Long-term: {r['climate']['method']}  →  "
         f"Weibull A={r['climate']['lt_weibull'][0]:.2f} m/s, k={r['climate']['lt_weibull'][1]:.2f}",
-        f"  Gross AEP: {r['losses']['gross_lt_mwh']:,.0f} MWh/yr   "
+        f"  Gross AEP: {r['losses']['gross_lt_mwh']:,.0f} MWh/yr ({r['losses']['lt_method_used']}; "
+        f"Method A cross-check: {r['losses']['gross_lt_mwh_method_a']:,.0f})   "
         f"Total losses: {tree['pct_of_gross'].sum():.2f}%",
         f"  Net AEP: P50 = {p['P50']:,.0f}   P75 = {p['P75']:,.0f}   "
         f"P90 = {p['P90']:,.0f}   P99 = {p['P99']:,.0f} MWh/yr",

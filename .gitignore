@@ -11,6 +11,11 @@ results/
 runs/
 tests/_oem_tmp/
 
+# PyInstaller
+dist/
+build/
+*.spec
+
 # OS / editor
 .DS_Store
 Thumbs.db

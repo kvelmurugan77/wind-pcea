@@ -2,12 +2,18 @@
 yield assessment, view the report and download outputs.
 
 Run:  python app.py   (serves on http://0.0.0.0:8000)
+or as a standalone Windows EXE (double-click; browser opens automatically).
 """
 import json
+import logging
 import os
 import re
 import shutil
+import socket
+import sys
+import threading
 import uuid
+import webbrowser
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -15,10 +21,33 @@ from windpcea import config as cfg_mod
 from windpcea.analysis import run_analysis
 from windpcea.report import build_html, export_csvs, export_excel
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-RUNS = os.path.join(BASE, "runs")
-SAMPLE = os.path.join(BASE, "sample_data")
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    # standalone EXE: bundled files live in _MEIPASS, user data next to the
+    # EXE / in %LOCALAPPDATA%
+    BASE = os.path.dirname(sys.executable)
+    BUNDLED = getattr(sys, "_MEIPASS", BASE)
+    RUNS = os.path.join(os.environ.get("LOCALAPPDATA", BASE), "WindPCEA", "runs")
+    logging.basicConfig(filename=os.path.join(BASE, "windpcea.log"),
+                        level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
+else:
+    BASE = os.path.dirname(os.path.abspath(__file__))
+    BUNDLED = BASE
+    RUNS = os.path.join(BASE, "runs")
+SAMPLE = os.path.join(BUNDLED, "sample_data")
 os.makedirs(RUNS, exist_ok=True)
+
+
+def _find_port(start=8000):
+    for p in range(start, start + 10):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", p))
+                return p
+            except OSError:
+                continue
+    return start
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB uploads
@@ -229,5 +258,12 @@ def download(run_id, filename):
 
 
 if __name__ == "__main__":
-    print("WindPCEA web app on http://0.0.0.0:8000")
-    app.run(host="0.0.0.0", port=8000, threaded=True)
+    if FROZEN:
+        port = _find_port()
+        threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+        logging.info(f"WindPCEA started on http://127.0.0.1:{port}")
+        print(f"WindPCEA running at http://127.0.0.1:{port} (log: windpcea.log)")
+        app.run(host="127.0.0.1", port=port, threaded=True)
+    else:
+        print("WindPCEA web app on http://0.0.0.0:8000")
+        app.run(host="0.0.0.0", port=8000, threaded=True)

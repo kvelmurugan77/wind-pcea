@@ -159,6 +159,69 @@ def mcp_scatter(site_daily, ref_ws, r2, title="MCP: site vs long-term reference"
     return fig
 
 
+def turbine_curves_overlay(per_turbine_curves, farm_curve, warr_curve, rated,
+                           title="Per-turbine power curves vs warranted"):
+    """Overlay of every turbine's binned curve (light) with the farm curve
+    (bold) and the warranted curve (orange)."""
+    fig, ax = plt.subplots(figsize=(7.6, 4.4))
+    for tc in per_turbine_curves:
+        c = tc["curve"]
+        m = c["mean_power"].notna()
+        if m.sum() > 0:
+            ax.plot(c.loc[m, "bin_center"], c.loc[m, "mean_power"],
+                    color="#B9C4D0", lw=1.0, alpha=0.75,
+                    label="Individual turbines" if tc is per_turbine_curves[0] else None)
+    fm = farm_curve["mean_power"].notna()
+    ax.plot(farm_curve.loc[fm, "bin_center"], farm_curve.loc[fm, "mean_power"],
+            color=NAVY, lw=2.4, label="Farm measured curve")
+    ax.plot(warr_curve["bin_center"], warr_curve["mean_power"], color=ORANGE,
+            lw=2, label="Warranted power curve")
+    ax.axhline(rated, color=GREY, ls="--", lw=1)
+    ax.text(0.02, rated * 1.02, f"Rated {rated:,.0f} kW", fontsize=8, color=GREY)
+    ax.set_xlim(0, 28); ax.set_ylim(0, rated * 1.18)
+    ax.set_xlabel("Wind speed (m/s)"); ax.set_ylabel("Active power (kW)")
+    ax.set_title(title)
+    ax.legend(loc="upper left", frameon=False, fontsize=8)
+    return fig
+
+
+def prod_scatter(energy, wind, fit, title, xlabel, ylabel,
+                 energy_unit="MWh"):
+    """Scatter of energy vs wind speed with the fitted regression curve."""
+    j = pd.DataFrame({"E": energy, "WS": wind}).dropna()
+    fig, ax = plt.subplots(figsize=(6.0, 4.2))
+    ax.scatter(j["WS"], j["E"], s=14, alpha=0.6, color=TEAL)
+    x = np.linspace(max(0.5, j["WS"].min()), j["WS"].max(), 80)
+    if fit.get("kind") in ("power_law", "cubic"):
+        y = fit["c"] * x ** fit["b"]
+        label = f"E = {fit['c']:.2f}·WS^{fit['b']:.2f}"
+    else:
+        y = fit["a"] + fit["b"] * x
+        label = f"E = {fit['b']:.3f}·WS {'+' if fit['a'] >= 0 else '−'} {abs(fit['a']):.1f}"
+    ax.plot(x, y, color=ORANGE, lw=2, label=label)
+    ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+    ax.set_title(f"{title}  (R² = {fit['r2']:.2f}, n = {fit['n']})")
+    ax.legend(frameon=False)
+    return fig
+
+
+def lt_predicted_series(predicted, n_years, title="Long-term predicted energy",
+                        ylabel="Energy (MWh)"):
+    """Time series of the long-term predicted energy (daily or monthly)."""
+    s = predicted
+    fig, ax = plt.subplots(figsize=(6.0, 3.6))
+    if len(s) > 600:
+        ax.plot(s.index, s.rolling(30, center=True).mean(), color=NAVY, lw=1.2)
+        ax.plot(s.index, s, color=TEAL, alpha=0.25, lw=0.5)
+        ax.set_ylabel(ylabel)
+    else:
+        ax.plot(s.index, s, color=NAVY, lw=1.6, marker="o", ms=3)
+        ax.set_ylabel(ylabel)
+    ax.set_title(f"{title}  (mean {s.mean():,.0f} {ylabel} per period)")
+    ax.set_xlabel("Year")
+    return fig
+
+
 def wake_polar(sector_table, title="Mean wake deficit by sector"):
     """Polar chart of mean wake deficit per direction sector.
 

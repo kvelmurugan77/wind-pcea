@@ -25,6 +25,7 @@ DEFAULTS = {
     "warranted_power_curve": None, # path to CSV: wind_speed_mps,power_kw
     "long_term_wind_file": None,   # path to CSV: date,ws_mps[,dir_deg]
     "long_term_source": "auto",    # auto | file | nasa_power | measured_only
+    "lt_primary_method": "method_a",  # method_a | method_b (production regression) | method_b_auto
     "nasa_power_start_year": 2001,
     "air_density_correction": True,
     "air_pressure_kpa": None,      # site mean pressure; if None assume 101.325 (sea level)

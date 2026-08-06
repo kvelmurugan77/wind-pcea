@@ -24,6 +24,7 @@ self-contained HTML report, an Excel workbook and CSV exports.
 | **Power curve** | IEC 61400-12-1 0.5 m/s binning of operating, non-curtailed data; air-density correction to standard conditions; energy-weighted deviation vs the warranted curve per turbine and for the farm; degraded turbines are automatically highlighted |
 | **Wake analysis** | Reference-turbine method: per 30° sector the least-waked turbines define the free-stream wind speed; per-turbine deficits per sector; wake energy loss from the warranted curve at free-stream vs nacelle speed |
 | **Long-term correction (MCP)** | Sector-wise linear regression of site daily means on a long-term reference — user file, or NASA POWER (MERRA-2) reanalysis fetched automatically from latitude/longitude; long-term Weibull (shape from the measured record, scale adjusted to the long-term mean) |
+| **LT gross AEP — two methods** | **Method A:** long-term Weibull × warranted power curve (integral). **Method B:** production regression — measured daily/monthly gross energy vs wind speed is regressed (E = c·v³ daily / E = a + b·WS monthly) and applied to the full long-term wind record, giving the LT energy series and annualised gross AEP. Both are computed, charted (scatter + fit + LT predicted series) and compared; Method A is primary by default (`lt_primary_method: method_b` switches to B for long PORs) |
 | **Loss tree** | Gross AEP from the long-term Weibull × warranted curve; losses (availability, curtailment, derating, environmental, wake, turbine performance, electrical, other) applied multiplicatively; reconciliation of the modelled vs metered energy over the measurement period |
 | **Uncertainty** | Monte Carlo (default 20,000 draws) of lognormal 1σ components → P50 / P75 / P90 / P99, 80% CI on P50, tornado chart of contributions |
 | **Benchmark** | Assessed P50 vs pre-construction P50 (if provided) |
@@ -145,7 +146,12 @@ exports for all profiles and verifies parsing).
 
 ## Running the tool
 
-**Web application (recommended):**
+**Windows EXE (no Python needed, OpenWind-style):**
+- Download `WindPCEA.exe` from the latest build artifact: repo → **Actions** → *Build Windows EXE* → latest run → artifact download (or build it yourself with `build_exe.bat`).
+- Double-click the EXE — it starts the local web app and opens your browser automatically.
+- The GitHub Actions workflow builds the EXE in the cloud on every push.
+
+**Web application:**
 ```bash
 python app.py          # → http://localhost:8000
 ```
@@ -190,6 +196,12 @@ python -m windpcea.cli --config sample_data/config.json \
 - This is an engineering tool implementing standard industry practice
   (IEC 61400-12-1 binning, IEC 61400-26 availability categories, MCP,
   Monte Carlo P-values). It is not a certified assessment.
+- Memory: the loader streams CSVs in chunks, but the analysis pipeline needs
+  the flagged data in memory (~1-2 GB per million 10-min records at float64).
+  For very large exports set `"use_float32": true` in the config to halve this.
+- The production-regression method (B) is most reliable with a multi-year
+  period of record covering all seasons; for shorter records it is reported
+  as an indicative cross-check.
 - Wind speeds come from nacelle anemometry (rotor-affected); a met mast or
   lidar reference would refine the power curve and wake analysis.
 - Losses measured over the SCADA period are assumed to carry forward to the

@@ -99,17 +99,17 @@ yield assessment — the same workflow a DNV-style consultant would run.</p>
   <div class="card"><div class="k">Availability</div><div class="s">Time- &amp; energy-based availability per turbine, lost energy by cause, downtime split, monthly table</div></div>
   <div class="card"><div class="k">Power curve</div><div class="s">IEC 61400-12-1 0.5 m/s binning, air-density correction, energy-weighted deviation vs warranted curve, degraded-turbine detection</div></div>
   <div class="card"><div class="k">Wake analysis</div><div class="s">Reference-turbine free-stream method, per-sector deficits, wake energy loss</div></div>
-  <div class="card"><div class="k">Long-term correction</div><div class="s">Sector-wise linear-regression MCP against user file or NASA POWER (MERRA-2), long-term Weibull</div></div>
+  <div class="card"><div class="k">Long-term correction</div><div class="s">Sector-wise linear-regression MCP against user file or NASA POWER (MERRA-2); LT gross AEP cross-checked by production regression (daily/monthly energy vs wind speed)</div></div>
   <div class="card"><div class="k">Loss tree &amp; P-values</div><div class="s">Gross → net AEP with full loss tree, Monte Carlo P50/P75/P90/P99, 80% CI, tornado of uncertainties</div></div>
 </div>
 
 <h2><span class="num">2.</span> Sample results (30 MW demo farm, Tamil Nadu)</h2>
 <div class="cards">
-  <div class="card"><div class="k">Gross AEP</div><div class="v">91,985</div><div class="s">MWh/yr (long-term)</div></div>
-  <div class="card"><div class="k">Net AEP — P50</div><div class="v">86,855</div><div class="s">MWh/yr</div></div>
-  <div class="card"><div class="k">P90</div><div class="v">97,356</div><div class="s">MWh/yr</div></div>
-  <div class="card"><div class="k">Capacity factor</div><div class="v">33.0%</div><div class="s">2.5 MW × 12 turbines</div></div>
-  <div class="card"><div class="k">Availability</div><div class="v">99.2%</div><div class="s">time-based • 98.6% production-based</div></div>
+  <div class="card"><div class="k">Gross AEP</div><div class="v">98,975</div><div class="s">MWh/yr (long-term)</div></div>
+  <div class="card"><div class="k">Net AEP — P50</div><div class="v">91,610</div><div class="s">MWh/yr</div></div>
+  <div class="card"><div class="k">P90</div><div class="v">102,537</div><div class="s">MWh/yr</div></div>
+  <div class="card"><div class="k">Capacity factor</div><div class="v">34.8%</div><div class="s">2.5 MW × 12 turbines</div></div>
+  <div class="card"><div class="k">Availability</div><div class="v">98.3%</div><div class="s">time-based • 98.0% production-based</div></div>
   <div class="card"><div class="k">OEM SCADA</div><div class="v">8 profiles</div><div class="s">Vestas • SGRE • Suzlon • Envision • Nordex • Goldwind • Inox</div></div>
 </div>
 
@@ -121,6 +121,8 @@ yield assessment — the same workflow a DNV-style consultant would run.</p>
   <div>{img_tag(os.path.join(IMGS,'mc_hist.png'),'Monte Carlo')}</div>
   <div>{img_tag(os.path.join(IMGS,'wake_polar.png'),'Wake polar')}</div>
   <div>{img_tag(os.path.join(IMGS,'tornado.png'),'Tornado')}</div>
+  <div>{img_tag(os.path.join(IMGS,'prod_daily.png'),'Daily energy vs wind')}</div>
+  <div>{img_tag(os.path.join(IMGS,'lt_daily.png'),'LT predicted energy')}</div>
 </div>
 
 <h2><span class="num">4.</span> Run it yourself</h2>

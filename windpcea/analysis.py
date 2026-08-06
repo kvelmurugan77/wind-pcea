@@ -22,6 +22,7 @@ import pandas as pd
 from . import availability as avail_mod
 from . import config as cfg_mod
 from . import losses as losses_mod
+from . import ltproduction as ltp_mod
 from . import mcp as mcp_mod
 from . import oem as oem_mod
 from . import powercurve as pc_mod
@@ -170,6 +171,7 @@ def run_analysis(cfg, scada_path, outdir=None):
                                         min_count=cfg["min_bin_count"])
     dev_pct = pc_mod.energy_weighted_deviation(farm_curve, warr)
     per_turb = []
+    per_turb_curves = []
     for tid, g in op.groupby("turbine"):
         g_p = g["power_kw"] / np.clip(g["density_ratio"], 0.3, 1.5) if density is not None else g["power_kw"]
         c = pc_mod.bin_power_curve(g["ws"].values, g_p.values,
@@ -179,9 +181,11 @@ def run_analysis(cfg, scada_path, outdir=None):
         pr = float(g["energy_kwh"].sum() / max(1e-6, g["expected_energy_kwh"].sum()))
         per_turb.append({"turbine": tid, "deviation_pct": d, "performance_ratio": pr,
                          "n_operating_rows": len(g)})
+        per_turb_curves.append({"turbine": tid, "curve": c})
     per_turb_df = pd.DataFrame(per_turb)
     power_curve = {"farm_curve": farm_curve, "warranted_curve": warr,
                    "deviation_pct": dev_pct, "per_turbine": per_turb_df,
+                   "per_turbine_curves": per_turb_curves,
                    "perf_energy_mwh": perf_energy_mwh, "note": curve_note}
 
     # ---------------- long-term wind climate (MCP) ----------------
@@ -189,7 +193,56 @@ def run_analysis(cfg, scada_path, outdir=None):
     lt_A, lt_k = climate["lt_weibull"]
 
     # ---------------- gross & net AEP ----------------
-    gross_lt_mwh = n_turb * pc_mod.aep_from_weibull(lt_A, lt_k, v_arr, p_arr)
+    # Method A: long-term Weibull x warranted power curve
+    gross_lt_mwh_a = n_turb * pc_mod.aep_from_weibull(lt_A, lt_k, v_arr, p_arr)
+    # Method B: production regression (daily/monthly energy vs wind speed
+    # applied to the long-term record) — the primary method when it works
+    production = ltp_mod.lt_production_assessment(cfg, df, climate)
+    climate["production"] = production
+    if production:
+        # sanity check: production-based LT gross must be physically plausible
+        # relative to the Weibull x curve method; flag degenerate fits
+        for key in ("daily", "monthly"):
+            v = production.get(key)
+            if v is not None:
+                ratio = v["lt_annual_gross_mwh"] / max(1.0, gross_lt_mwh_a)
+                if not (0.3 <= ratio <= 2.0):
+                    v["unreliable"] = True
+                    v["unreliable_reason"] = (
+                        f"LT gross {v['lt_annual_gross_mwh']:,.0f} MWh/yr is "
+                        f"{ratio:.2f}x the Weibull x curve estimate "
+                        f"({gross_lt_mwh_a:,.0f}) — degenerate fit, excluded "
+                        f"from primary selection")
+        usable = {k: v for k, v in production.items()
+                  if isinstance(v, dict) and v.get("lt_annual_gross_mwh")
+                  and not v.get("unreliable")}
+        if production.get("primary") and usable:
+            if production["primary"] not in usable:
+                production["primary"] = "daily" if "daily" in usable else \
+                    ("monthly" if "monthly" in usable else None)
+        if not usable:
+            production["lt_gross_mwh"] = None
+            production["primary"] = None
+            production.setdefault("note", "production regression excluded "
+                                           "(unreliable fits)")
+    lt_primary = cfg.get("lt_primary_method", "method_a")
+    use_b = False
+    if production is not None and production.get("lt_gross_mwh"):
+        if lt_primary == "method_b":
+            use_b = True
+        elif lt_primary == "method_b_auto":
+            fit_r2 = production.get(production["primary"], {}).get("r2", 0) \
+                if production.get("primary") else 0
+            diff_pct = abs(100.0 * (production["lt_gross_mwh"] - gross_lt_mwh_a)
+                           / gross_lt_mwh_a)
+            use_b = production.get("record_months", 0) >= 12 and fit_r2 >= 0.5 \
+                and diff_pct <= 15.0
+    if use_b:
+        gross_lt_mwh = production["lt_gross_mwh"]
+        lt_method_used = f"Production regression ({production['primary']})"
+    else:
+        gross_lt_mwh = gross_lt_mwh_a
+        lt_method_used = "Weibull x warranted curve (Method A)"
     tree, net_mwh, recon = losses_mod.build_loss_tree(
         cfg, energy, wake["wake_energy_mwh"], perf_energy_mwh, gross_period_mwh, gross_lt_mwh)
 
@@ -216,6 +269,9 @@ def run_analysis(cfg, scada_path, outdir=None):
         "power_curve": power_curve, "wake": wake, "energy": energy,
         "availability": availability, "climate": climate,
         "losses": {"tree": tree, "gross_lt_mwh": gross_lt_mwh,
+                   "gross_lt_mwh_method_a": gross_lt_mwh_a,
+                   "gross_lt_mwh_method_b": production["lt_gross_mwh"] if production else None,
+                   "lt_method_used": lt_method_used,
                    "net_mwh": net_mwh, "recon": recon},
         "uncertainty": unc, "benchmark": benchmark,
         "capacity_factor_pct": cf,

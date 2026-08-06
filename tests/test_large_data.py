@@ -40,14 +40,17 @@ def main():
         assert abs(a - b) < 1e-9 * max(1, abs(a)), f"mean mismatch {c}: {a} vs {b}"
     print(f"  OK  chunked equivalence       rows={len(df1):,}  chunks-5k == single-pass")
 
-    # ---- 2) ~1M row stress test ------------------------------------------
+    # ---- 2) ~1.2M row stress test -----------------------------------------
+    # (the loader streams with bounded memory; the analysis pipeline itself
+    # needs ~1-2 GB RAM per million rows at float64 — enable "use_float32":
+    # true in the config to halve that)
     d = pd.read_csv(sample)
     d["timestamp"] = pd.to_datetime(d["timestamp"])
     t0 = time.time()
     parts = []
-    for i in range(20):
+    for i in range(6):
         p = d.copy()
-        p["timestamp"] = p["timestamp"] + pd.Timedelta(days=i * 31)
+        p["timestamp"] = p["timestamp"] + pd.Timedelta(days=i * 130)   # > base span (120 d)
         parts.append(p)
     big = pd.concat(parts, ignore_index=True)
     big_path = os.path.join(TMP, "big_1m.csv")
