@@ -5,6 +5,7 @@ import sys
 
 from . import config as cfg_mod
 from .analysis import run_analysis
+from .blockwise import run_blockwise
 from .report import build_html, console_summary, export_csvs, export_excel
 
 
@@ -15,13 +16,23 @@ def main(argv=None):
     ap.add_argument("--config", required=True, help="JSON configuration file")
     ap.add_argument("--scada", required=True, help="SCADA data file (CSV/XLSX)")
     ap.add_argument("--outdir", default="results", help="output directory")
+    ap.add_argument("--blockwise", action="store_true",
+                    help="out-of-core mode for very large files (1 GB+); "
+                         "bounded memory, slower")
+    ap.add_argument("--block-days", type=int, default=None,
+                    help="block size in days for --blockwise (default auto)")
     args = ap.parse_args(argv)
 
     cfg = cfg_mod.load_config(args.config)
     os.makedirs(args.outdir, exist_ok=True)
 
     print(f"WindPCEA — running post-construction assessment on {args.scada} ...")
-    results = run_analysis(cfg, args.scada, outdir=args.outdir)
+    if args.blockwise:
+        print("  mode: blockwise out-of-core (bounded memory)")
+        results = run_blockwise(cfg, args.scada, outdir=args.outdir,
+                                block_days=args.block_days)
+    else:
+        results = run_analysis(cfg, args.scada, outdir=args.outdir)
 
     html = build_html(results, args.outdir)
     xlsx = export_excel(results, args.outdir)

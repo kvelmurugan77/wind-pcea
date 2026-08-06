@@ -15,6 +15,127 @@ ORANGE = "#E8871E"
 # --------------------------------------------------------------------------
 # helpers
 # --------------------------------------------------------------------------
+def _sensitivity_table(r):
+    """One-at-a-time sensitivity of net P50 to key parameters."""
+    from . import powercurve as pc_mod
+    rows = []
+    gross = r["losses"]["gross_lt_mwh"]
+    net = r["losses"]["net_mwh"]
+    p50 = r["uncertainty"]["p"]["P50"]
+    total_loss = r["losses"]["tree"]["pct_of_gross"].sum() / 100.0
+
+    # each loss category +/- 1 pp
+    for _, row in r["losses"]["tree"].iterrows():
+        li = row["pct_of_gross"] / 100.0
+        denom = 1.0 - li
+        if denom <= 1e-6:
+            continue
+        d_net = net * 0.01 / denom          # +1pp loss -> net decreases by this
+        rows.append({"parameter": f"Loss: {row['loss']} +1 pp",
+                     "change": "+1 pp", "delta_p50_mwh": -d_net,
+                     "delta_p50_pct": -100.0 * d_net / p50})
+
+    # wind speed +/- 0.1 m/s
+    A, k = r["climate"]["lt_weibull"]
+    n_turb = r["meta"]["num_turbines"]
+    v_arr, p_arr = r["v_arr"], r["p_arr"]
+    gross_hi = n_turb * pc_mod.aep_from_weibull(A * (1 + 0.1 / A), k, v_arr, p_arr)
+    gross_lo = n_turb * pc_mod.aep_from_weibull(A * (1 - 0.1 / A), k, v_arr, p_arr)
+    net_hi = gross_hi * (1 - total_loss)
+    net_lo = gross_lo * (1 - total_loss)
+    rows.append({"parameter": "Long-term mean wind speed +0.1 m/s",
+                 "change": "+0.1 m/s", "delta_p50_mwh": net_hi - net,
+                 "delta_p50_pct": 100.0 * (net_hi - net) / p50})
+    rows.append({"parameter": "Long-term mean wind speed −0.1 m/s",
+                 "change": "−0.1 m/s", "delta_p50_mwh": net_lo - net,
+                 "delta_p50_pct": 100.0 * (net_lo - net) / p50})
+
+    # measurement period +- 25%
+    if r["climate"].get("production") and r["climate"]["production"].get("lt_gross_mwh"):
+        mb = r["climate"]["production"]["lt_gross_mwh"]
+        for sgn, lbl in [("+25%", 1.25), ("−25%", 0.75)]:
+            net_s = mb * sgn * (1 - total_loss)
+            rows.append({"parameter": f"Production-regression gross {lbl}",
+                         "change": lbl,
+                         "delta_p50_mwh": net_s - net,
+                         "delta_p50_pct": 100.0 * (net_s - net) / p50})
+    return pd.DataFrame(rows)
+
+
+def _conclusions_html(r, sens):
+    """Auto-generated conclusions & recommendations (DNV-report style)."""
+    avail = r["availability"]["farm"]
+    pc = r["power_curve"]
+    wk = r["wake"]
+    cl = r["climate"]
+    qc = r["qc"]
+    pts = []
+    recs = []
+
+    # key finding bullets
+    if r["benchmark"]:
+        b = r["benchmark"]
+        verdict = "above" if b["ratio"] >= 1 else "below"
+        pts.append(f"Assessed net P50 energy yield is <b>{b['ratio']:.2f}×</b> "
+                   f"({b['delta_pct']:+.1f}%) the pre-construction P50 — "
+                   f"<b>{verdict}</b> the pre-construction estimate.")
+    pts.append(f"Time-based availability is <b>{avail['time_avail_pct']:.2f}%</b> and "
+               f"production-based availability <b>{avail['prod_avail_pct']:.2f}%</b>.")
+    pts.append(f"Farm power curve deviation (energy-weighted) is "
+               f"<b>{pc['deviation_pct']:+.2f}%</b> relative to the warranted curve.")
+    pts.append(f"Wake loss is estimated at <b>{wk['wake_loss_pct']:.2f}%</b> of gross energy "
+               f"from the nacelle-anemometry reference-turbine analysis.")
+    if cl["mcp"] is not None:
+        pts.append(f"Long-term correction (MCP) against "
+                   f"{'a user reference' if 'user' in cl['method'] else 'NASA POWER reanalysis'}"
+                   f" achieved R² = <b>{cl['mcp']['r2']:.2f}</b> over "
+                   f"{cl['lt_n_years']:.1f} years.")
+    pts.append(f"Total losses are <b>{r['losses']['tree']['pct_of_gross'].sum():.2f}%</b> "
+               f"of gross, giving net P50 = <b>{r['uncertainty']['p']['P50']:,.0f} MWh/yr</b> "
+               f"(P90 = {r['uncertainty']['p']['P90']:,.0f} MWh/yr).")
+
+    # recommendations
+    if avail["time_avail_pct"] < 97.0:
+        worst = (r["availability"]["per_turbine"]
+                 .sort_values("downtime_loss_mwh", ascending=False)
+                 .head(3)["turbine"].tolist())
+        recs.append(f"Availability ({avail['time_avail_pct']:.1f}%) is below the typical 97% "
+                    f"benchmark — prioritise investigation of turbines "
+                    f"{', '.join(map(str, worst))}.")
+    dev = pc["per_turbine"]
+    if len(dev) and dev["deviation_pct"].max() > 2.0:
+        worst = dev.sort_values("deviation_pct", ascending=False).head(3)
+        recs.append(f"Turbines {', '.join(worst['turbine'].astype(str).tolist())} show "
+                    f"energy-weighted deviations of "
+                    f"{', '.join(f'{d:+.1f}%' for d in worst['deviation_pct'])} — "
+                    f"recommend blade inspection / pitch alignment review.")
+    if r["energy"]["E_lost_mwh"].get(3, 0) / max(1.0, r["energy"]["E_actual_mwh"]) > 0.02:
+        recs.append(f"Curtailment ({r['energy']['E_lost_mwh'][3]:,.0f} MWh over the period, "
+                    f"{100*r['energy']['E_lost_mwh'][3]/max(1.0, r['energy']['E_actual_mwh']):.1f}% "
+                    f"of measured) is material — document grid/PPA curtailment for future "
+                    f"revenue assessments.")
+    if wk["wake_loss_pct"] > 4.0:
+        recs.append(f"Wake losses ({wk['wake_loss_pct']:.1f}%) are significant — consider "
+                    f"layout-aware wake modelling or wake-steering optimisation.")
+    if cl["mcp"] is not None and cl["mcp"]["r2"] < 0.8:
+        recs.append("MCP correlation is moderate (R² < 0.8) — a met mast or lidar campaign "
+                    "would reduce the wind-resource uncertainty.")
+    if qc["coverage_pct"] < 90.0:
+        recs.append(f"SCADA capture rate is only {qc['coverage_pct']:.1f}% — request "
+                    f"complete data from the operator to reduce uncertainty.")
+    if not recs:
+        recs.append("No material performance issues identified; the wind farm is performing "
+                    "in line with expectations.")
+    r["conclusions"] = {"findings": pts, "recommendations": recs}
+    html = ["<h2>10&nbsp;&nbsp;Conclusions &amp; recommendations</h2>",
+            "<h3>Key findings</h3><ul class='det'>"]
+    html += [f"<li>{p}</li>" for p in pts]
+    html.append("</ul><h3>Recommendations</h3><ul class='det'>")
+    html += [f"<li>{rec}</li>" for rec in recs]
+    html.append("</ul>")
+    return "".join(html)
+
+
 def _fmt(x, nd=0):
     if x is None or (isinstance(x, float) and not np.isfinite(x)):
         return "–"
@@ -53,6 +174,12 @@ def html_table(df, formats=None, caption=None, cls="tbl"):
 def _img(b64, alt="chart", maxw="100%"):
     return (f"<div class='chart'><img src='data:image/png;base64,{b64}' "
             f"alt='{alt}' style='max-width:{maxw}'/></div>")
+
+
+def _safe_df(r, key):
+    """Return the dataframe for key, or an empty frame if missing."""
+    v = r.get(key)
+    return v if isinstance(v, pd.DataFrame) and len(v) > 0 else pd.DataFrame()
 
 
 def _chart(fn, alt="chart", fallback="Chart unavailable"):
@@ -163,6 +290,29 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
 <div class="s">{_fmt(r['qc']['rows'])} records</div></div>
 </div>""")
 
+    # DNV-style key results table
+    kr = pd.DataFrame({
+        "parameter": ["Gross energy yield (long-term, P50)",
+                      "Total losses", "Net energy yield — P50", "Net energy yield — P75",
+                      "Net energy yield — P90", "Net energy yield — P99",
+                      "Capacity factor", "Full-load hours",
+                      "Time-based availability", "Production-based availability",
+                      "Power curve deviation (energy-weighted)", "Wake loss",
+                      "Long-term mean wind speed", "Measurement period",
+                      "Data capture rate"],
+        "value": [f"{gross_lt:,.0f} MWh/yr", f"{tree['pct_of_gross'].sum():.2f}%",
+                  f"{p['P50']:,.0f} MWh/yr", f"{p['P75']:,.0f} MWh/yr",
+                  f"{p['P90']:,.0f} MWh/yr", f"{p['P99']:,.0f} MWh/yr",
+                  f"{r['capacity_factor_pct']:.1f}%",
+                  f"{r['full_load_hours']:,.0f} h/yr",
+                  f"{avail['time_avail_pct']:.2f}%", f"{avail['prod_avail_pct']:.2f}%",
+                  f"{r['power_curve']['deviation_pct']:+.2f}%",
+                  f"{r['wake']['wake_loss_pct']:.2f}%",
+                  f"{r['climate']['lt_mean_ws']:.2f} m/s",
+                  f"{meta['record_start']} → {meta['record_end']}",
+                  f"{r['qc']['coverage_pct']:.1f}%"]})
+    parts.append(html_table(kr, caption="Key results — post-construction energy yield assessment"))
+
     if bm:
         color = "#2E8B57" if bm["ratio"] >= 1 else "#C0504D"
         parts.append(f"""<div class="note">
@@ -215,6 +365,26 @@ multi-year / multi-hundred-turbine exports are handled within bounded memory.</d
     if n_bad:
         parts.append(f"<div class='note ok'><b>Data quality:</b> {_fmt(n_bad)} records flagged as bad data or "
                      f"anemometer faults were excluded from curve fitting and wake analysis.</div>")
+
+    # ---- wind resource (DNV-style section 2.1) --------------------------
+    ws_stats = r.get("wind_stats") or {}
+    parts.append("<h3>2.1&nbsp;&nbsp;Wind resource — measured period</h3>")
+    parts.append(f"""<div class="grid2">
+<div>{_chart(lambda: pl.fig_to_b64(pl.monthly_wind_bar(ws_stats.get('monthly_ws'))),
+    'Monthly wind', 'No monthly wind data')}</div>
+<div>{_chart(lambda: pl.fig_to_b64(pl.diurnal_wind(ws_stats.get('diurnal_ws'))),
+    'Diurnal wind', 'No diurnal wind data')}</div>
+<div class="full">{_chart(lambda: pl.fig_to_b64(pl.ws_distribution(
+    ws_stats.get('ws_hist'), r['climate'].get('meas_weibull'))), 'WS distribution',
+    'No wind distribution data')}</div>
+</div>""")
+    if "yearly" in r and r["yearly"] is not None and len(r["yearly"]) > 1:
+        parts.append(html_table(
+            r["yearly"], formats={"year": lambda v: f"{v:g}",
+                                  "gross_mwh": lambda v: _fmt(v, 0),
+                                  "measured_mwh": lambda v: _fmt(v, 0),
+                                  "hours": lambda v: _fmt(v, 0)},
+            caption="Yearly production summary (gross = warranted-curve energy at measured wind)"))
 
     # ---------------- availability ----------------
     parts.append("<h2>3&nbsp;&nbsp;Availability &amp; lost-energy accounting</h2>")
@@ -275,6 +445,15 @@ A<sub>E</sub> = {_pct(avail['prod_avail_pct'],2)}. Full derivation in Appendix A
                                    "total_h": lambda v: _fmt(v,0),
                                    "time_avail_pct": lambda v: _pct(v,1)},
         caption="Monthly production &amp; time-based availability"))
+    parts.append(f"""<div class="grid2">
+<div>{_chart(lambda: pl.fig_to_b64(pl.monthly_trend(
+    r['availability']['monthly'], 'time_avail_pct',
+    'Monthly time-based availability', 'Availability (%)')), 'Availability trend',
+    'Availability trend unavailable')}</div>
+<div>{_chart(lambda: pl.fig_to_b64(pl.downtime_stacked(
+    _safe_df(r, 'monthly_downtime'))),
+    'Downtime stacked chart', 'Downtime breakdown unavailable')}</div>
+</div>""")
 
     # ---------------- power curve ----------------
     pc = r["power_curve"]
@@ -323,6 +502,17 @@ warranted curve is computed over the measured operating wind distribution.</p>
                  "n_operating_rows": lambda v: _fmt(v, 0)},
         caption="Per-turbine energy-weighted power curve deviation &amp; operating performance ratio "
                 "(ratio of actual to expected energy while operating; <1 = shortfall)"))
+    # P-P plot + monthly performance ratio (DNV-style turbine performance)
+    pp = (r.get("wind_stats") or {}).get("pp_sample")
+    parts.append(f"""<div class="grid2">
+<div>{_chart(lambda: pl.fig_to_b64(pl.pp_plot(pp, cfg['rated_power_kw'])),
+    'P-P plot', 'P-P plot unavailable (insufficient operating data)')}</div>
+<div>{_chart(lambda: pl.fig_to_b64(pl.monthly_trend(
+    _safe_df(r, 'monthly_perf'), 'performance_ratio',
+    'Monthly performance ratio (actual/expected while operating)',
+    'Performance ratio', color=ORANGE, fmt='.3f')), 'Monthly performance',
+    'Monthly performance unavailable')}</div>
+</div>""")
 
     # ---------------- wake ----------------
     wk = r["wake"]
@@ -492,6 +682,16 @@ energy production. P-values are quantiles of that distribution.</p>""")
         unc["components"],
         formats={"sigma_pct": lambda v: _pct(v, 2), "contribution_pct": lambda v: _pct(v, 1)},
         caption="Uncertainty components (1σ) and share of total variance"))
+
+    # ---------------- DNV-style: sensitivity & conclusions ----------------
+    sens = _sensitivity_table(r)
+    parts.append("<h2>9&nbsp;&nbsp;Sensitivity analysis</h2>")
+    parts.append("""<p class="lead">Sensitivity of the net P50 yield to the key parameters,
+computed by perturbing each parameter while holding the others at their base values.</p>""")
+    parts.append(html_table(sens, formats={"delta_p50_mwh": lambda v: f"{v:+,.0f}",
+                                           "delta_p50_pct": lambda v: f"{v:+.2f}%"},
+                            caption="One-at-a-time sensitivity of net P50 energy yield"))
+    parts.append(_conclusions_html(r, sens))
 
     # ---------------- appendices ----------------
     total_h = float(r["availability"]["per_turbine"]["hours"].sum())

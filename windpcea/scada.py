@@ -41,15 +41,30 @@ def _to_numeric_with_euro(df_col):
 
 
 def _parse_dates(series):
-    """Parse timestamps; prefers the interpretation that parses more values."""
+    """Parse timestamps in a single pass (memory-efficient for large files).
+
+    Prefers day-first (DD-MM-YYYY, European OEMs) when it parses more values;
+    the 'mixed' format is used so a single pass handles several stamp styles.
+    """
     if pd.api.types.is_datetime64_any_dtype(series):
         return series
     s = series.astype(str).str.strip()
-    d1 = pd.to_datetime(s, errors="coerce", dayfirst=False)
-    d2 = pd.to_datetime(s, errors="coerce", dayfirst=True)
-    if d2.notna().sum() > d1.notna().sum():
-        return d2
-    return d1
+    if len(s) == 0:
+        return pd.Series(pd.NaT, index=series.index)
+    # decide the day-first convention on a small sample, then parse ONCE
+    # (saves a full second pass on multi-million-row files)
+    sample = s.iloc[:: max(1, len(s) // 5000)][:5000]
+    try:
+        n1 = pd.to_datetime(sample, errors="coerce", dayfirst=False, format="mixed").notna().sum()
+        n2 = pd.to_datetime(sample, errors="coerce", dayfirst=True, format="mixed").notna().sum()
+    except (TypeError, ValueError):
+        n1 = pd.to_datetime(sample, errors="coerce", dayfirst=False).notna().sum()
+        n2 = pd.to_datetime(sample, errors="coerce", dayfirst=True).notna().sum()
+    dayfirst = n2 > n1
+    try:
+        return pd.to_datetime(s, errors="coerce", dayfirst=dayfirst, format="mixed")
+    except (TypeError, ValueError):
+        return pd.to_datetime(s, errors="coerce", dayfirst=dayfirst)
 
 
 def _find_col(df, aliases, exclude=None):

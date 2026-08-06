@@ -26,8 +26,10 @@ self-contained HTML report, an Excel workbook and CSV exports.
 | **Long-term correction (MCP)** | Sector-wise linear regression of site daily means on a long-term reference — user file, or NASA POWER (MERRA-2) reanalysis fetched automatically from latitude/longitude; long-term Weibull (shape from the measured record, scale adjusted to the long-term mean) |
 | **LT gross AEP — two methods** | **Method A:** long-term Weibull × warranted power curve (integral). **Method B:** production regression — measured daily/monthly gross energy vs wind speed is regressed (E = c·v³ daily / E = a + b·WS monthly) and applied to the full long-term wind record, giving the LT energy series and annualised gross AEP. Both are computed, charted (scatter + fit + LT predicted series) and compared; Method A is primary by default (`lt_primary_method: method_b` switches to B for long PORs) |
 | **Loss tree** | Gross AEP from the long-term Weibull × warranted curve; losses (availability, curtailment, derating, environmental, wake, turbine performance, electrical, other) applied multiplicatively; reconciliation of the modelled vs metered energy over the measurement period |
-| **Uncertainty** | Monte Carlo (default 20,000 draws) of lognormal 1σ components → P50 / P75 / P90 / P99, 80% CI on P50, tornado chart of contributions |
+| **Uncertainty** | Monte Carlo (default 20,000 draws) of lognormal 1σ components → P50 / P75 / P90 / P99, 80% CI on P50, tornado chart of contributions, one-at-a-time sensitivity table |
 | **Benchmark** | Assessed P50 vs pre-construction P50 (if provided) |
+| **DNV-style report** | Key-results table, wind-resource section (monthly / diurnal / speed distribution), P-P plot, monthly performance & availability trends, downtime cause stack, sensitivity analysis, auto-generated conclusions & recommendations |
+| **Large data (1 GB+)** | Blockwise out-of-core engine (`--blockwise` / `"large_file_mode": "auto"`): data processed in time blocks with bounded memory. Tested: 13.6 M rows / 755 MB analysed in ~8 min with **1.5 GB peak RAM** on a 2 GB sandbox; scales to 2 GB+ files on any normal PC. Compressed (.csv.gz) inputs supported |
 
 ## Quick start
 
@@ -190,6 +192,15 @@ python -m windpcea.cli --config sample_data/config.json \
   C how to run, D methodology)
 - `pceya_results.xlsx` — summary + all analysis tables
 - `flagged_scada_10min.csv`, `farm_power_curve.csv`, `per_turbine_metrics.csv`
+
+## Testing
+
+```
+python tests/test_oem_scada.py    # 9 realistic OEM export formats
+python tests/test_robustness.py   # pathological data (all-downtime, no wind, zero power...)
+python tests/test_large_data.py   # chunked equivalence + 1.25M-row stress + wide files
+python tests/test_blockwise.py    # blockwise == in-memory equivalence (<=2% on key metrics)
+```
 
 ## Notes & limitations
 

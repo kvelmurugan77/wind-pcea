@@ -23,6 +23,8 @@ DEFAULTS = {
     "column_map": {},              # exact column names: {"power": "Active Power (kW)", "ws": "...", "turbine": "...", "timestamp": "...", "dir": "...", "temp": "...", "status": "..."}
     "csv_chunk_rows": 1000000,     # rows per chunk when streaming large CSVs
     "use_float32": False,          # halve numeric memory (slightly lower precision)
+    "large_file_mode": "auto",     # auto | true (blockwise out-of-core for 1GB+) | false
+    "block_days": None,            # block size (days) for blockwise mode; None = auto
     "warranted_power_curve": None, # path to CSV: wind_speed_mps,power_kw
     "long_term_wind_file": None,   # path to CSV: date,ws_mps[,dir_deg]
     "long_term_source": "auto",    # auto | file | nasa_power | measured_only

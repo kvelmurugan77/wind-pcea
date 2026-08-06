@@ -19,6 +19,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from windpcea import config as cfg_mod
 from windpcea.analysis import run_analysis
+from windpcea.blockwise import run_blockwise
 from windpcea.report import build_html, export_csvs, export_excel
 
 FROZEN = bool(getattr(sys, "frozen", False))
@@ -256,7 +257,15 @@ def analyze():
             cfg = cfg_mod.load_config(None, overrides)
             outdir = run_dir
 
-        results = run_analysis(cfg, scada_path, outdir=outdir)
+        # very large files -> blockwise out-of-core mode (bounded memory)
+        large = cfg.get("large_file_mode", "auto")
+        fsize_mb = (os.path.getsize(scada_path) / 1e6) if os.path.exists(scada_path) else 0
+        use_blockwise = large is True or (
+            large == "auto" and fsize_mb >= 900)
+        if use_blockwise:
+            results = run_blockwise(cfg, scada_path, outdir=outdir)
+        else:
+            results = run_analysis(cfg, scada_path, outdir=outdir)
         build_html(results, outdir)
         export_excel(results, outdir)
         export_csvs(results, outdir)

@@ -222,6 +222,100 @@ def lt_predicted_series(predicted, n_years, title="Long-term predicted energy",
     return fig
 
 
+def monthly_wind_bar(monthly_ws, title="Monthly mean wind speed (measured)"):
+    if monthly_ws is None or len(monthly_ws) == 0:
+        return _empty_fig("No monthly wind data")
+    fig, ax = plt.subplots(figsize=(7.2, 3.4))
+    ax.bar(monthly_ws["month"].astype(str), monthly_ws["ws_mps"],
+           color=TEAL, alpha=0.85, width=0.7)
+    ax.axhline(monthly_ws["ws_mps"].mean(), color=ORANGE, ls="--", lw=1.4,
+               label=f"Mean {monthly_ws['ws_mps'].mean():.2f} m/s")
+    ax.set_ylabel("Wind speed (m/s)")
+    ax.set_title(title)
+    ax.legend(frameon=False)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    return fig
+
+
+def diurnal_wind(diurnal_ws, title="Diurnal wind speed variation"):
+    if diurnal_ws is None or len(diurnal_ws) == 0:
+        return _empty_fig("No diurnal wind data")
+    fig, ax = plt.subplots(figsize=(7.2, 3.4))
+    ax.plot(diurnal_ws["hour"], diurnal_ws["ws_mps"], color=NAVY, lw=2, marker="o", ms=4)
+    ax.fill_between(diurnal_ws["hour"], diurnal_ws["ws_mps"], alpha=0.15, color=NAVY)
+    ax.set_xlabel("Hour of day"); ax.set_ylabel("Wind speed (m/s)")
+    ax.set_title(title)
+    ax.set_xticks(range(0, 24, 2))
+    return fig
+
+
+def ws_distribution(ws_hist, weib, title="Wind speed distribution (10-min records)"):
+    if ws_hist is None or len(ws_hist) == 0:
+        return _empty_fig("No wind speed distribution data")
+    fig, ax = plt.subplots(figsize=(6.4, 3.6))
+    total = ws_hist["count"].sum()
+    ax.bar(ws_hist["bin_center"], 100.0 * ws_hist["count"] / total,
+           width=1.0, color=TEAL, alpha=0.65, edgecolor="white")
+    if weib:
+        A, k = weib
+        v = np.linspace(0.25, 40, 300)
+        pdf = (k / A) * (v / A) ** (k - 1) * np.exp(-(v / A) ** k)
+        ax.plot(v, 100.0 * pdf, color=ORANGE, lw=2.2,
+                label=f"Weibull A={A:.2f}, k={k:.2f}")
+    ax.set_xlabel("Wind speed (m/s)"); ax.set_ylabel("Frequency (%)")
+    ax.set_title(title)
+    ax.legend(frameon=False)
+    return fig
+
+
+def pp_plot(pp_sample, rated, title="P-P plot — measured vs predicted power (operating)"):
+    if pp_sample is None or len(pp_sample) == 0:
+        return _empty_fig("No P-P data")
+    fig, ax = plt.subplots(figsize=(6.0, 5.4))
+    ax.scatter(pp_sample["expected_power_kw"], pp_sample["power_kw"],
+               s=2, alpha=0.18, color=TEAL, rasterized=True)
+    lim = max(pp_sample["power_kw"].max(), pp_sample["expected_power_kw"].max(),
+              rated) * 1.05
+    ax.plot([0, lim], [0, lim], color=GREY, ls="--", lw=1.2,
+            label="1:1 (perfect)")
+    ax.set_xlim(0, lim); ax.set_ylim(0, lim)
+    ax.set_xlabel("Predicted power (warranted curve, kW)")
+    ax.set_ylabel("Measured power (kW)")
+    ax.set_title(title)
+    ax.legend(frameon=False)
+    return fig
+
+
+def monthly_trend(df, value_col, title, ylabel, color=TEAL, fmt=".1f"):
+    if df is None or len(df) == 0:
+        return _empty_fig("No monthly data")
+    fig, ax = plt.subplots(figsize=(7.4, 3.4))
+    ax.plot(df["month"].astype(str), df[value_col], color=color, lw=2, marker="o", ms=4)
+    ax.set_ylabel(ylabel); ax.set_title(title)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    return fig
+
+
+def downtime_stacked(monthly_downtime, title="Downtime loss by cause and month"):
+    if monthly_downtime is None or len(monthly_downtime) == 0:
+        return _empty_fig("No downtime breakdown data")
+    piv = monthly_downtime.pivot(index="month", columns="cause", values="loss_mwh").fillna(0)
+    fig, ax = plt.subplots(figsize=(7.4, 3.6))
+    piv.plot(kind="bar", stacked=True, ax=ax, color=["#C0504D", "#E8871E",
+                                                     "#5B9BD5", "#8A93A3"])
+    ax.set_ylabel("Lost energy (MWh)"); ax.set_title(title)
+    ax.legend(frameon=False, fontsize=8)
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+    return fig
+
+
+def _empty_fig(text):
+    fig, ax = plt.subplots(figsize=(6, 3))
+    ax.text(0.5, 0.5, text, ha="center", va="center", color="#8A93A3", fontsize=11)
+    ax.axis("off")
+    return fig
+
+
 def wake_polar(sector_table, title="Mean wake deficit by sector"):
     """Polar chart of mean wake deficit per direction sector.
 

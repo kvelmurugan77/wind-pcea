@@ -139,6 +139,30 @@ def run_analysis(cfg, scada_path, outdir=None):
     energy = avail_mod.energy_accounting(df, cfg)
     availability = avail_mod.availability_analysis(df, cfg, energy)
 
+    # ---------------- wind resource statistics (for DNV-style report) ----
+    wind_stats = _wind_stats_from_df(df)
+
+    # monthly downtime causes + monthly performance ratio + yearly table
+    monthly_downtime = _monthly_downtime_causes(df, cfg)
+    op = df[df["flag"] == 0]
+    if len(op):
+        op2 = op.copy()
+        op2["_m"] = op2["timestamp"].dt.to_period("M").astype(str)
+        mp = op2.groupby("_m").agg(act=("energy_kwh", "sum"),
+                                   exp=("expected_energy_kwh", "sum"))
+        monthly_perf = pd.DataFrame({"month": mp.index,
+                                     "performance_ratio": mp["act"] / mp["exp"].clip(lower=1e-9)})
+    else:
+        monthly_perf = pd.DataFrame(columns=["month", "performance_ratio"])
+    prod = df[df["flag"].isin((0, 7))]
+    yearly = prod.groupby(prod["timestamp"].dt.year).agg(
+        measured_mwh=pd.NamedAgg(column="energy_kwh", aggfunc=lambda s: s.sum() / 1000.0),
+        hours=pd.NamedAgg(column="flag", aggfunc=lambda s: len(s) * df["dt_h"].iloc[0]),
+    )
+    gross_y = df.groupby(df["timestamp"].dt.year)["expected_energy_kwh"].agg(
+        lambda s: s.sum() / 1000.0).rename("gross_mwh")
+    yearly = yearly.join(gross_y).reset_index().rename(columns={"timestamp": "year"})
+
     # ---------------- wake analysis ----------------
     # only exclude turbines with a significant share of anemometer-fault rows
     # (sporadic low-wind false positives should not drop a turbine from the
@@ -278,6 +302,10 @@ def run_analysis(cfg, scada_path, outdir=None):
         "capacity_factor_pct": cf,
         "full_load_hours": net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb),
         "v_arr": v_arr, "p_arr": p_arr,
+        "wind_stats": wind_stats,
+        "monthly_downtime": monthly_downtime,
+        "monthly_perf": monthly_perf,
+        "yearly": yearly,
     }
     return results
 
@@ -285,3 +313,54 @@ def run_analysis(cfg, scada_path, outdir=None):
 def run_files(config_path, scada_path, outdir=None):
     cfg = cfg_mod.load_config(config_path)
     return run_analysis(cfg, scada_path, outdir=outdir)
+
+
+def _wind_stats_from_df(df):
+    """Wind-resource statistics for the report: rose histogram, monthly and
+    diurnal mean wind speed, wind-speed distribution, P-P sample."""
+    op = df[df["flag"] == 0]
+    ws = op["ws"].dropna()
+    stats = {"rose": {}, "monthly_ws": pd.DataFrame(), "diurnal_ws": pd.DataFrame(),
+             "ws_hist": pd.DataFrame(), "pp_sample": pd.DataFrame()}
+    if len(op) == 0:
+        return stats
+    if "dir_deg" in op.columns:
+        m = op["dir_deg"].notna() & op["ws"].notna()
+        d5 = (op.loc[m, "dir_deg"] // 5 * 5).astype(int).values
+        w1 = op.loc[m, "ws"].astype(int).values
+        comb = d5 * 1000 + w1
+        for k, c in zip(*np.unique(comb, return_counts=True)):
+            stats["rose"][(int(k // 1000), int(k % 1000))] = int(c)
+    mm = op.groupby(op["timestamp"].dt.to_period("M"))["ws"].mean()
+    stats["monthly_ws"] = pd.DataFrame({"month": mm.index.astype(str),
+                                        "ws_mps": mm.values})
+    hh = op.groupby(op["timestamp"].dt.hour)["ws"].mean()
+    stats["diurnal_ws"] = pd.DataFrame({"hour": hh.index, "ws_mps": hh.values})
+    hist, edges = np.histogram(ws.values, bins=np.arange(0, 42, 1.0))
+    stats["ws_hist"] = pd.DataFrame({"bin_center": edges[:-1] + 0.5, "count": hist})
+    n = len(op)
+    take = op.sample(min(30000, n), random_state=1)
+    stats["pp_sample"] = take[["ws", "power_kw", "expected_power_kw"]].reset_index(drop=True)
+    return stats
+
+
+def _monthly_downtime_causes(df, cfg):
+    down = df[df["flag"] == 2]
+    rows = []
+    if len(down) and "status" in df.columns:
+        sc = cfg["status_codes"]
+        down = down.copy()
+        down["month"] = down["timestamp"].dt.to_period("M").astype(str)
+        for code, label in [("fault", "Faults"), ("maintenance", "Maintenance"),
+                            ("grid", "Grid outage")]:
+            codes = set(sc.get(code, []))
+            g = down[down["status"].isin(codes)].groupby("month")[
+                "expected_energy_kwh"].sum() / 1000.0
+            for m, v in g.items():
+                rows.append({"month": m, "cause": label, "loss_mwh": float(v)})
+        known = [c for k in ("fault", "maintenance", "grid") for c in sc.get(k, [])]
+        g = down[~down["status"].isin(known)].groupby("month")[
+            "expected_energy_kwh"].sum() / 1000.0
+        for m, v in g.items():
+            rows.append({"month": m, "cause": "Other", "loss_mwh": float(v)})
+    return pd.DataFrame(rows)

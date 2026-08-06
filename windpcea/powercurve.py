@@ -15,7 +15,16 @@ def weibull_fit(ws, max_k=6.0):
     s = ws.std(ddof=1)
     if mu <= 0 or s <= 0:
         return 7.0, 2.0
-    cv = s / mu
+    return weibull_fit_moments(mu, s)
+
+
+def weibull_fit_moments(mu, sd, max_k=6.0):
+    """Weibull (A, k) from the mean and standard deviation (method of moments)."""
+    mu = float(mu)
+    sd = float(sd)
+    if mu <= 0 or sd <= 0:
+        return 7.0, 2.0
+    cv = sd / mu
 
     def f(k):
         return gamma(1 + 2 / k) / gamma(1 + 1 / k) ** 2 - (1 + cv ** 2)
