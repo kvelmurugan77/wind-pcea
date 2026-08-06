@@ -148,6 +148,20 @@ auto-detection — the rest are detected automatically.</div>
 <div style="margin-top:16px">
 <button class="btn" id="run" onclick="runAnalyze(false)">Run assessment</button>
 <button class="btn ghost" id="runsample" onclick="runAnalyze(true)" style="margin-left:10px">Run with bundled sample data</button>
+<button class="btn ghost" id="selftest" onclick="selfTest()" style="margin-left:10px">Self-test app</button>
+<div id="stResult"></div>
+<script>
+async function selfTest(){
+  const el = document.getElementById('stResult');
+  el.innerHTML = '<span class="spin"></span>Running self-test…';
+  try{
+    const r = await fetch('/selftest');
+    const j = await r.json();
+    if(r.ok){ el.innerHTML = '✅ v' + j.version + ' self-test OK — P50 ' + j.p50.toLocaleString() + ' MWh/yr (' + j.rows.toLocaleString() + ' rows in ' + j.seconds + 's)'; }
+    else { el.innerHTML = '⚠ v' + j.version + ' self-test FAILED: ' + j.error; }
+  }catch(e){ el.innerHTML = '⚠ self-test error: ' + e; }
+}
+</script>
 </div>
 <div id="status"></div>
 </div>
@@ -183,7 +197,9 @@ async function runAnalyze(sample){
     if(!r.ok){
       let tb = '';
       if(j.trace && j.trace.length){ tb = '<br><pre style="font-size:11px;background:#f7f9fc;border:1px solid #dde3ec;padding:8px;border-radius:6px;overflow-x:auto;color:#22303f">' + j.trace.join('<br>') + '</pre>'; }
-      st.innerHTML = '⚠ v' + (j.version||'?') + ': ' + (j.error || 'Analysis failed') + tb +
+      let ct = '';
+      if(j.config_types){ ct = '<br><span style="font-size:11px;color:#6b7787">config: ' + JSON.stringify(j.config_types) + '</span>'; }
+      st.innerHTML = '⚠ v' + (j.version||'?') + ': ' + (j.error || 'Analysis failed') + ct + tb +
         '<br><span style="font-size:12px">Tip: if column detection failed, open ⚙ Advanced ' +
         'above, type the exact column names from your file, and retry.</span>';
       return;
@@ -295,9 +311,17 @@ def analyze():
         import traceback
         tb = traceback.format_exc()
         print(tb)
-        # include the last traceback lines so the user can report the cause
-        last = tb.strip().splitlines()[-4:]
+        last = tb.strip().splitlines()[-15:]
+        # report the actual types of every config field used in arithmetic
+        types = {}
+        for _k in ("rated_power_kw", "hub_height_m", "cut_in_mps", "cut_out_mps",
+                   "air_pressure_kpa", "electrical_loss_pct", "other_loss_pct",
+                   "preconstruction_p50_gwh", "mc_iterations", "mc_seed",
+                   "bin_width_mps", "min_bin_count", "latitude", "longitude"):
+            _v = cfg.get(_k)
+            types[_k] = f"{type(_v).__name__}:{_v!r}" if _v is not None else "unset"
         return jsonify({"error": str(e), "trace": last,
+                        "config_types": types,
                         "version": WIND_PCEA_VERSION}), 500
 
 
@@ -306,6 +330,25 @@ def _quick_summary(r):
     return {"farm": r["meta"]["farm_name"], "gross_mwh": round(r["losses"]["gross_lt_mwh"]),
             "p50": round(p["P50"]), "p75": round(p["P75"]), "p90": round(p["P90"]),
             "availability": round(r["availability"]["farm"]["time_avail_pct"], 2)}
+
+
+@app.route("/selftest")
+def selftest():
+    """Run the bundled sample end-to-end; proves the app itself works."""
+    import time as _t
+    try:
+        cfg = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
+        _t0 = _t.time()
+        r = run_analysis(cfg, os.path.join(SAMPLE, "scada_sample.csv"))
+        return jsonify({"ok": True, "version": WIND_PCEA_VERSION,
+                        "p50": round(r["uncertainty"]["p"]["P50"]),
+                        "seconds": round(_t.time() - _t0, 1),
+                        "rows": r["qc"]["rows"]})
+    except Exception as e:
+        import traceback
+        return jsonify({"ok": False, "version": WIND_PCEA_VERSION,
+                        "error": str(e),
+                        "trace": traceback.format_exc().strip().splitlines()[-15:]}), 500
 
 
 @app.route("/report/<run_id>")

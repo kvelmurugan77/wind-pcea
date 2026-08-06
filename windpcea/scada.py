@@ -347,6 +347,10 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
 
     df["power_kw"] = pd.to_numeric(df["power_kw"], errors="coerce")
     df["ws"] = pd.to_numeric(df["ws"], errors="coerce")
+    if "temp_c" in df.columns:
+        df["temp_c"] = pd.to_numeric(df["temp_c"], errors="coerce")
+    if "dir_deg" in df.columns:
+        df["dir_deg"] = pd.to_numeric(df["dir_deg"], errors="coerce")
 
     # power unit auto-detection: values look like MW (< 100) -> scale to kW
     pmax = df["power_kw"].max()
@@ -387,6 +391,9 @@ def resample_10min(df):
 
     out = df.groupby("turbine").resample("10min").agg(agg)
     out = out.dropna(subset=["power_kw", "ws"], how="all").reset_index()
+    for _c in num_cols:
+        if _c in out.columns:
+            out[_c] = pd.to_numeric(out[_c], errors="coerce")
     return out
 
 

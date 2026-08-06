@@ -45,6 +45,12 @@ def add_flags(df, cfg, v_arr, p_arr, interp_power):
         has_status = False
 
     df = df.copy()
+    # type hygiene: any column used in arithmetic must be numeric, otherwise
+    # object-dtype cells (e.g. stray text in a numeric channel) would raise
+    # 'can't multiply sequence by non-int of type float'
+    for _c in ("power_kw", "ws", "dir_deg", "temp_c", "dt_h"):
+        if _c in df.columns:
+            df[_c] = pd.to_numeric(df[_c], errors="coerce")
     df["expected_power_kw"] = interp_power(df["ws"].values)
     df["flag"] = 8
     df["flag_reason"] = "Missing / NaN"
