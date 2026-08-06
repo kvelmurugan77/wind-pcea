@@ -27,7 +27,10 @@ DEFAULTS = {
     "block_days": None,            # block size (days) for blockwise mode; None = auto
     "warranted_power_curve": None, # path to CSV: wind_speed_mps,power_kw
     "long_term_wind_file": None,   # path to CSV: date,ws_mps[,dir_deg]
-    "long_term_source": "auto",    # auto | file | nasa_power | measured_only
+    "long_term_source": "auto",    # auto | file | era5 | nasa_power | measured_only
+    "era5_source": "open-meteo",   # open-meteo (ERA5T, free no key) | cds (needs CDS key)
+    "era5_start_year": None,       # default: last full year - 24
+    "era5_end_year": None,         # default: last full year
     "lt_primary_method": "method_a",  # method_a | method_b (production regression) | method_b_auto
     "nasa_power_start_year": 2001,
     "air_density_correction": True,
@@ -87,6 +90,18 @@ def validate_config(cfg):
         v = cfg.get(key, 0)
         if v < 0 or v > 50:
             problems.append(f"{key} must be between 0 and 50 %")
+    # coordinates are REQUIRED for a proper long-term assessment
+    if not (cfg.get("latitude") and cfg.get("longitude")):
+        if cfg.get("long_term_wind_file"):
+            pass  # a user reference file replaces the need for coordinates
+        elif cfg.get("long_term_source") == "measured_only":
+            pass  # explicitly measured-only
+        else:
+            problems.append(
+                "latitude and longitude are required (site coordinates) so the "
+                "long-term reanalysis reference (ERA5T) can be fetched. Set them "
+                "in the config or the web app, or provide 'long_term_wind_file', "
+                "or set long_term_source='measured_only'.")
     if problems:
         raise ValueError("Configuration problems: " + "; ".join(problems))
     return cfg

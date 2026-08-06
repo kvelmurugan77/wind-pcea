@@ -125,7 +125,29 @@ def long_term_climate(cfg, df, cache_dir=None, prefer_file=True):
         except Exception:
             ref = None
 
-    # 2) NASA POWER reanalysis
+    # 1b) ERA5 / ERA5T reanalysis (preferred long-term reference)
+    if mcp is None and cfg.get("long_term_source") in ("auto", "era5") \
+            and cfg.get("latitude") is not None and cfg.get("longitude") is not None:
+        try:
+            from .era5 import fetch_era5, describe_source
+            era = fetch_era5(
+                cfg["latitude"], cfg["longitude"],
+                hub_height_m=cfg.get("hub_height_m", 100),
+                start_year=cfg.get("era5_start_year"),
+                end_year=cfg.get("era5_end_year"),
+                cache_dir=cache_dir,
+                source=cfg.get("era5_source", "open-meteo"))
+            ref = era.rename(columns={"ws": "ws"})
+            mcp = run_mcp(site_daily, ref, sector_width=cfg.get("sector_width_deg", 30))
+            if mcp is not None:
+                method = describe_source(cfg["latitude"], cfg["longitude"],
+                                         era.index.min().year, era.index.max().year,
+                                         cfg.get("era5_source", "open-meteo"))
+        except Exception:
+            mcp = None
+            ref = None
+
+    # 2) NASA POWER reanalysis (fallback)
     if mcp is None and cfg.get("long_term_source") in ("auto", "nasa_power") \
             and cfg.get("latitude") is not None and cfg.get("longitude") is not None:
         try:

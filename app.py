@@ -118,8 +118,10 @@ automatically when latitude/longitude are configured.</div>
 <label>Hub height (m)</label><input type="number" id="hub" value="100">
 </div>
 <div>
-<label>Latitude</label><input type="text" id="lat" placeholder="e.g. 9.0 (optional)">
-<label>Longitude</label><input type="text" id="lon" placeholder="e.g. 77.8 (optional)">
+<label>Latitude * (required)</label><input type="text" id="lat" placeholder="e.g. 9.00">
+<div class="hint">Site coordinates are required — the tool downloads 25 years of
+ERA5T reanalysis wind for the long-term correction.</div>
+<label>Longitude * (required)</label><input type="text" id="lon" placeholder="e.g. 77.80">
 <label>Electrical losses (%)</label><input type="number" id="elec" value="2.0">
 </div>
 </div>
@@ -231,10 +233,17 @@ def analyze():
                 overrides["rated_power_kw"] = float(rated)
             if hub:
                 overrides["hub_height_m"] = float(hub)
+            # coordinates are REQUIRED unless a long-term file is supplied
             if lat:
                 overrides["latitude"] = float(lat)
             if lon:
                 overrides["longitude"] = float(lon)
+            if not lat or not lon:
+                if not lt and not request.files.get("cfgfile"):
+                    return jsonify({"error":
+                        "Latitude and longitude are required — the tool needs "
+                        "the site coordinates to download the ERA5T long-term "
+                        "wind reference for the energy-yield assessment."}), 400
             if elec:
                 overrides["electrical_loss_pct"] = float(elec)
             if curve:
