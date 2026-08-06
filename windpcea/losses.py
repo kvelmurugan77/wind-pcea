@@ -58,5 +58,5 @@ def build_loss_tree(cfg, energy, wake_energy_mwh, perf_energy_mwh, gross_period_
 
 
 def capacity_factor(net_mwh, cfg, hours=8760.0):
-    rated_total_kw = cfg["rated_power_kw"] * (cfg.get("num_turbines") or 1)
+    rated_total_kw = float(cfg["rated_power_kw"]) * (int(cfg.get("num_turbines") or 1))
     return 100.0 * net_mwh * 1000.0 / (rated_total_kw * hours)

@@ -17,6 +17,7 @@ import webbrowser
 
 from flask import Flask, jsonify, request, send_from_directory
 
+from windpcea import __version__ as WIND_PCEA_VERSION
 from windpcea import config as cfg_mod
 from windpcea.analysis import run_analysis
 from windpcea.blockwise import run_blockwise
@@ -151,7 +152,7 @@ auto-detection — the rest are detected automatically.</div>
 <div id="status"></div>
 </div>
 
-<div class="foot">WindPCEA v1.0 — engineering aid implementing standard industry practice; not a certified assessment.</div>
+<div class="foot">WindPCEA v__VER__ — engineering aid implementing standard industry practice; not a certified assessment.</div>
 </div>
 <script>
 async function runAnalyze(sample){
@@ -179,9 +180,14 @@ async function runAnalyze(sample){
   try{
     const r = await fetch('/analyze', {method:'POST', body: fd});
     const j = await r.json();
-    if(!r.ok){ st.innerHTML = '⚠ ' + (j.error || 'Analysis failed') +
-      '<br><span style="font-size:12px">Tip: if column detection failed, open ⚙ Advanced ' +
-      'above, type the exact column names from your file, and retry.</span>'; return; }
+    if(!r.ok){
+      let tb = '';
+      if(j.trace && j.trace.length){ tb = '<br><pre style="font-size:11px;background:#f7f9fc;border:1px solid #dde3ec;padding:8px;border-radius:6px;overflow-x:auto;color:#22303f">' + j.trace.join('<br>') + '</pre>'; }
+      st.innerHTML = '⚠ v' + (j.version||'?') + ': ' + (j.error || 'Analysis failed') + tb +
+        '<br><span style="font-size:12px">Tip: if column detection failed, open ⚙ Advanced ' +
+        'above, type the exact column names from your file, and retry.</span>';
+      return;
+    }
     st.innerHTML = '<span class="spin"></span>Done — opening report…';
     window.location.href = j.report_url;
   }catch(e){ st.innerHTML = '⚠ Network error: ' + e; }
@@ -191,7 +197,7 @@ async function runAnalyze(sample){
 
 @app.route("/")
 def index():
-    return INDEX_HTML.replace("__CSS__", CSS)
+    return INDEX_HTML.replace("__CSS__", CSS).replace("__VER__", WIND_PCEA_VERSION)
 
 
 def _save_upload(f, run_dir, name):
@@ -291,7 +297,8 @@ def analyze():
         print(tb)
         # include the last traceback lines so the user can report the cause
         last = tb.strip().splitlines()[-4:]
-        return jsonify({"error": str(e), "trace": last}), 500
+        return jsonify({"error": str(e), "trace": last,
+                        "version": WIND_PCEA_VERSION}), 500
 
 
 def _quick_summary(r):

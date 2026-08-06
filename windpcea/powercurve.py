@@ -126,6 +126,6 @@ def aep_from_timeseries(ws, v_arr, p_arr, dt_h):
 def air_density_ratio(temp_c, pressure_kpa=None):
     """Air density relative to standard (1.225 kg/m3 at 15 C, 101.325 kPa)."""
     T = np.asarray(temp_c, dtype=float) + 273.15
-    p = pressure_kpa if pressure_kpa else 101.325
+    p = float(pressure_kpa) if pressure_kpa else 101.325
     rho = p * 1000.0 / (287.05 * T)
     return rho / 1.225

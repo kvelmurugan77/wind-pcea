@@ -53,8 +53,8 @@ def load_warranted_curve(cfg):
         except Exception as e:
             raise ValueError(f"Could not read warranted power curve: {e}")
     # generic curve
-    rated = cfg["rated_power_kw"]
-    cut_in = cfg["cut_in_mps"]
+    rated = float(cfg["rated_power_kw"])
+    cut_in = float(cfg["cut_in_mps"])
     v = np.arange(0.0, 45.01, 0.5)
     p = rated * (1.0 - np.exp(-((np.maximum(v - cut_in, 0.0)) / 5.5) ** 3))
     p = np.where(v < cut_in, 0.0, p)
@@ -87,7 +87,7 @@ def run_analysis(cfg, scada_path, outdir=None):
         cfg["num_turbines"] = n_turb
 
     warr, curve_note = load_warranted_curve(cfg)
-    v_arr, p_arr = pc_mod.extend_curve(warr, cfg["rated_power_kw"], cfg["cut_out_mps"])
+    v_arr, p_arr = pc_mod.extend_curve(warr, float(cfg["rated_power_kw"]), float(cfg["cut_out_mps"]))
     interp_power = pc_mod.interp_power_factory(v_arr, p_arr)
 
     # air density correction (if temperature available)
@@ -271,7 +271,7 @@ def run_analysis(cfg, scada_path, outdir=None):
     tree, net_mwh, recon = losses_mod.build_loss_tree(
         cfg, energy, wake["wake_energy_mwh"], perf_energy_mwh, gross_period_mwh, gross_lt_mwh)
 
-    cf = 100.0 * net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb * 8760.0)
+    cf = 100.0 * net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb * 8760.0)
     benchmark = None
     if cfg.get("preconstruction_p50_gwh"):
         pre = float(cfg["preconstruction_p50_gwh"]) * 1000.0
@@ -300,7 +300,7 @@ def run_analysis(cfg, scada_path, outdir=None):
                    "net_mwh": net_mwh, "recon": recon},
         "uncertainty": unc, "benchmark": benchmark,
         "capacity_factor_pct": cf,
-        "full_load_hours": net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb),
+        "full_load_hours": net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb),
         "v_arr": v_arr, "p_arr": p_arr,
         "wind_stats": wind_stats,
         "monthly_downtime": monthly_downtime,

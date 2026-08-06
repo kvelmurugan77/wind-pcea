@@ -317,7 +317,7 @@ def run_blockwise(cfg, scada_path, outdir=None, block_days=None):
 
     acc = Accumulator(cfg)
     warr, curve_note = load_warranted_curve(cfg)
-    v_arr, p_arr = pc_mod.extend_curve(warr, cfg["rated_power_kw"], cfg["cut_out_mps"])
+    v_arr, p_arr = pc_mod.extend_curve(warr, float(cfg["rated_power_kw"]), float(cfg["cut_out_mps"]))
     interp_power = pc_mod.interp_power_factory(v_arr, p_arr)
 
     n_blocks = len(blocks)
@@ -532,7 +532,7 @@ def _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax, n_turb,
     unc = unc_mod.uncertainty_analysis(cfg, climate, tree, net_mwh,
                                        mc_iterations=cfg["mc_iterations"],
                                        seed=cfg["mc_seed"])
-    cf = 100.0 * net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb * 8760.0)
+    cf = 100.0 * net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb * 8760.0)
     benchmark = None
     if cfg.get("preconstruction_p50_gwh"):
         pre = cfg["preconstruction_p50_gwh"] * 1000.0
@@ -558,7 +558,7 @@ def _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax, n_turb,
                    "lt_method_used": lt_method_used, "net_mwh": net_mwh, "recon": recon},
         "uncertainty": unc, "benchmark": benchmark,
         "capacity_factor_pct": cf,
-        "full_load_hours": net_mwh * 1000.0 / (cfg["rated_power_kw"] * n_turb),
+        "full_load_hours": net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb),
         "v_arr": v_arr, "p_arr": p_arr,
         "wind_stats": _wind_stats(acc),
         "yearly": pd.DataFrame([dict(year=y, **v) for y, v in acc.year_rows.items()]),

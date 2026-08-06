@@ -163,7 +163,7 @@ def long_term_climate(cfg, df, cache_dir=None, prefer_file=True):
                     ref.reset_index().rename(columns={"index": "date"}).to_csv(cache, index=False)
             # correct 50 m -> hub height
             alpha = 0.20
-            ref["ws"] = ref["ws"] * (cfg["hub_height_m"] / 50.0) ** alpha
+            ref["ws"] = ref["ws"] * (float(cfg["hub_height_m"]) / 50.0) ** alpha
             ref = ref.rename(columns={"ws": "ws"})
             mcp = run_mcp(site_daily, ref, sector_width=cfg.get("sector_width_deg", 30))
             if mcp is not None:
