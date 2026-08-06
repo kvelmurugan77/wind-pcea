@@ -24,9 +24,11 @@ TS_ALIASES = ["timestamp", "datetime", "date time", "time stamp", "date", "time"
 # fallback patterns for non-standard column names (most specific first)
 POWER_FALLBACK = ["active power", "active_power", "activepower", "gen power",
                   "gen_power", "genpower", "power output", "power_output",
-                  "poweroutput", "output", "power", "pavg", "kw", "mw"]
+                  "poweroutput", "output", "power", "pavg", "kw", "mw",
+                  "active", "real power", "realpower", "gen", "generator",
+                  "pwr", "pgen", "ptot", "total", "ep"]
 WS_FALLBACK = ["wind speed", "wind_speed", "windspeed", "windspd", "wind",
-               "ws", "vavg", "v_avg"]
+               "ws", "vavg", "v_avg", "wsavg", "ws_avg"]
 
 
 def _to_numeric_with_euro(df_col):
@@ -257,7 +259,8 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
         df = pd.concat(frames, ignore_index=True)
     else:
         df["turbine"] = df[turb_col].astype(str).str.strip()
-        df = df.drop(columns=[turb_col])
+        if turb_col != "turbine":
+            df = df.drop(columns=[turb_col])
         pcol = _find_col(df, aliases["power"])
         for key, cands in [("power_kw", aliases["power"]), ("ws", aliases["ws"]),
                            ("dir_deg", aliases["dir"]), ("temp_c", aliases["temp"]),
@@ -289,6 +292,12 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
     # (must run BEFORE the keep-list filter, which drops non-canonical names)
     if "power_kw" not in df.columns:
         pcol = _fallback_find(df, POWER_FALLBACK)
+        if pcol is None:
+            # last resort: a column named exactly 'p' / 'P'
+            for c in df.columns:
+                if oem.normalize_col_name(c) == "p":
+                    pcol = c
+                    break
         if pcol:
             vals = _to_numeric_with_euro(df[pcol])
             if "mw" in pcol.lower():
@@ -425,6 +434,12 @@ def _matches(nc, aliases):
     return False
 
 
+# canonical internal column names — always kept (files may already be in
+# the tool's own long format, e.g. re-using a previous export)
+CANONICAL_COLS = ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
+                  "temp_c", "status", "curt_flag"]
+
+
 def _needed_columns(columns, aliases):
     """Only the columns needed for the analysis (memory saving on huge
     exports with hundreds of channels)."""
@@ -432,10 +447,13 @@ def _needed_columns(columns, aliases):
     ts_aliases = ["timestamp", "datetime", "date time", "time stamp"] + aliases["timestamp"]
     signal = (aliases["power"] + aliases["ws"] + aliases["dir"] + aliases["temp"]
               + aliases["status"] + ["curtail", "derat", "power limit", "limit"]
-              + POWER_FALLBACK + WS_FALLBACK)
+              + POWER_FALLBACK + WS_FALLBACK + CANONICAL_COLS)
     for c in columns:
         nc = oem.normalize_col_name(c)
         if not nc:
+            continue
+        if nc == "p":                     # single-letter power column
+            needed.append(c)
             continue
         if _matches(nc, ts_aliases):
             needed.append(c)
@@ -518,9 +536,13 @@ def load_scada(path, profile_key="auto", column_overrides=None, column_map=None,
             df, resolved = standardize(raw, profile_key=profile_key,
                                        column_overrides=column_overrides,
                                        column_map=column_map)
-        except ValueError:
-            raise ValueError("Could not parse Excel SCADA file: expected a sheet "
-                             "with timestamp, turbine and power/wind-speed columns")
+        except ValueError as e:
+            raise ValueError(
+                str(e).split(". If your file")[0]
+                + f". Your file's columns are: {list(raw.columns)[:25]}"
+                + ". If your power column has a custom name, use the "
+                  "Advanced column mapping (or 'column_map' in the config) "
+                  "to specify it.")
     elif lower.endswith(".parquet"):
         try:
             df, resolved = standardize(pd.read_parquet(path), profile_key=profile_key,
@@ -537,6 +559,19 @@ def load_scada(path, profile_key="auto", column_overrides=None, column_map=None,
             read_info["method"] = f"streamed ({n_chunks} chunk{'s' if n_chunks > 1 else ''})"
             read_info["chunks"] = n_chunks
         except ValueError as e:
+            # make the error show the ACTUAL header of the user's file
+            cols = None
+            try:
+                cols, _kw = _sniff_csv(path)
+            except Exception:
+                cols = None
+            if cols:
+                raise ValueError(
+                    str(e).split(". If your file")[0]
+                    + f". Your file's columns are: {list(cols)[:25]}"
+                    + ". If your power column has a custom name, use the "
+                      "Advanced column mapping (or 'column_map' in the config) "
+                      "to specify it.")
             raise ValueError(str(e))
 
     df = resample_10min(df)

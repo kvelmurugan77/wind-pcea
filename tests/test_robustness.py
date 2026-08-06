@@ -95,6 +95,28 @@ def main():
              {"column_map": {"timestamp": "TS", "turbine": "TID",
                              "power": "PWR", "ws": "VSPD"}})
 
+    # 8) tool's own canonical columns + power named 'P'
+    d8 = b[["timestamp", "turbine_id", "power_kw", "wind_speed_mps",
+            "nacelle_dir_deg", "temp_c"]].rename(columns={
+                "turbine_id": "turbine", "wind_speed_mps": "ws",
+                "nacelle_dir_deg": "dir_deg", "temp_c": "temp_c",
+                "power_kw": "P"})
+    d8["curt_flag"] = 0
+    run_case("canonical_plus_P", d8)
+
+    # 9) canonical columns WITHOUT any power column -> informative error
+    d9 = d8.drop(columns=["P"])
+    p9 = os.path.join(TMP, "case_no_power_col.csv")
+    d9.to_csv(p9, index=False)
+    cfg9 = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
+    try:
+        run_analysis(cfg9, p9, outdir=os.path.join(TMP, "out_no_power"))
+        raise AssertionError("no_power_col should raise")
+    except ValueError as e:
+        assert "Your file's columns are:" in str(e), f"error not informative: {e}"
+        assert "curt_flag" in str(e)
+        print("  OK  no_power_col -> informative error listing real columns")
+
     print("\nAll robustness tests passed ✓")
 
 
