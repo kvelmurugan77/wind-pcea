@@ -74,7 +74,8 @@ jobs:
         shell: pwsh
         run: |
           gh release delete "v$env:VERSION" --yes --cleanup-tag 2>$null
-          Write-Host "old release removed (if any)"
+          if ($LASTEXITCODE -ne 0) { Write-Host "no previous release to delete" }
+          Write-Host "delete step done"
 
       - name: Create Release and upload EXE
         env:
