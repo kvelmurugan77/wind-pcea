@@ -148,7 +148,10 @@ exports for all profiles and verifies parsing).
 
 ## Running the tool
 
-**Windows EXE (no Python needed, OpenWind-style):**
+**Windows EXE (no Python needed, OpenWind-style):** auto-built and released on every push — the link below always serves the latest version:
+
+**https://github.com/kvelmurugan77/wind-pcea/releases/latest/download/WindPCEA.exe**
+
 - Download `WindPCEA.exe` from the latest build artifact: repo → **Actions** → *Build Windows EXE* → latest run → artifact download (or build it yourself with `build_exe.bat`).
 - Double-click the EXE — it starts the local web app and opens your browser automatically.
 - The GitHub Actions workflow builds the EXE in the cloud on every push.

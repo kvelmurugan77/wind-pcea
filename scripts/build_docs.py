@@ -83,7 +83,7 @@ td{padding:7px 12px;border-top:1px solid #eef1f6}
     <span class="badge">8 OEM profiles</span><span class="badge">Python • pandas • scipy</span>
   </div>
   <div class="cta">
-    <a class="btn" href="https://github.com/kvelmurugan77/wind-pcea/releases/download/v1.2.0/WindPCEA.exe">⬇ Download WindPCEA.exe (Windows)</a>
+    <a class="btn" href="https://github.com/kvelmurugan77/wind-pcea/releases/latest/download/WindPCEA.exe">⬇ Download WindPCEA.exe (Windows)</a>
     <a class="btn" href="sample-report.html">View full sample report →</a>
     <a class="btn alt" href="https://github.com/kvelmurugan77/wind-pcea">Source code</a>
   </div>
