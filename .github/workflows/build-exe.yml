@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'app.py', 'windpcea/**', 'requirements.txt', '.github/workflows/build-exe.yml' ]
+    paths: [ 'app.py', 'windpcea/**', 'tests/**', 'requirements.txt', '.github/workflows/build-exe.yml' ]
 
 jobs:
   build:
