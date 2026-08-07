@@ -75,6 +75,7 @@ jobs:
         run: |
           gh release delete "v$env:VERSION" --yes --cleanup-tag 2>$null
           if ($LASTEXITCODE -ne 0) { Write-Host "no previous release to delete" }
+          $global:LASTEXITCODE = 0
           Write-Host "delete step done"
 
       - name: Create Release and upload EXE
