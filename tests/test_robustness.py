@@ -45,6 +45,11 @@ def run_case(name, df, cfg_overrides=None):
     r = run_analysis(cfg, p, outdir=out)
     html = build_html(r, out)
     assert os.path.exists(html) and os.path.getsize(html) > 10000, f"[{name}] report missing/small"
+    from windpcea.report import export_excel, export_csvs
+    xlsx = export_excel(r, out)
+    assert os.path.exists(xlsx) and os.path.getsize(xlsx) > 5000, f"[{name}] excel missing/small"
+    csvs = export_csvs(r, out)
+    assert all(os.path.exists(c) for c in csvs), f"[{name}] csvs missing"
     wk = r["wake"]["sector_table"]
     assert "sector_deg" in wk.columns, f"[{name}] wake table lost its columns"
     print(f"  OK  {name:<32} rows={len(r['df']):>7} wake_rows={len(wk):>3} "

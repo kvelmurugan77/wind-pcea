@@ -38,7 +38,9 @@ WS_FALLBACK = ["wind speed", "wind_speed", "windspeed", "windspd", "wind",
 def _to_numeric_with_euro(df_col):
     """Numeric coercion that also understands '12,5' European decimals."""
     out = pd.to_numeric(df_col, errors="coerce")
-    if out.isna().mean() > 0.3 and df_col.dtype == object:
+    # pandas 3 stores strings as `str` dtype (not object) — check both
+    is_str = df_col.dtype == object or isinstance(df_col.dtype, pd.StringDtype)
+    if out.isna().mean() > 0.3 and is_str:
         cleaned = df_col.astype(str).str.replace(",", ".", regex=False)
         out2 = pd.to_numeric(cleaned, errors="coerce")
         if out2.notna().sum() > out.notna().sum():
@@ -368,7 +370,8 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
 
 def _status_to_numeric(series):
     """Map text status strings to numeric codes; pass numbers through."""
-    if series.dtype != object:
+    is_str = series.dtype == object or isinstance(series.dtype, pd.StringDtype)
+    if not is_str:
         return pd.to_numeric(series, errors="coerce")
     s = series.astype(str).str.strip().str.lower()
     mapped = s.map(oem.TEXT_STATUS)

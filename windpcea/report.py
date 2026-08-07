@@ -934,7 +934,7 @@ def export_excel(r, outdir):
         tree.to_excel(xw, sheet_name="LossTree", index=False)
         unc["components"].to_excel(xw, sheet_name="Uncertainty", index=False)
         pd.DataFrame([{"P-value": k, "NetAEP_MWh": v} for k, v in p.items()]).to_excel(
-            xw, "PValues", index=False)
+            xw, sheet_name="PValues", index=False)
         r["qc"]["flag_counts"].to_excel(xw, sheet_name="QC", index=False)
     return path
 
