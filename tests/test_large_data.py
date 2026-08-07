@@ -87,7 +87,7 @@ def main():
     print(f"  OK  wide+junk (246 cols)      turbines={dfw['turbine'].nunique()}  "
           f"rows={len(dfw):,}  meanP={dfw['power_kw'].mean():.0f} kW")
 
-    print("\nAll large-data tests passed ✓")
+    print("\nAll large-data tests passed OK")
 
 
 if __name__ == "__main__":

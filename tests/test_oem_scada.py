@@ -187,7 +187,7 @@ def main():
     assert proft == "envision", f"envision truncated detected as {proft}"
     assert "dir_deg" in dft.columns and "status" in dft.columns
 
-    print("\nAll OEM compatibility tests passed ✓")
+    print("\nAll OEM compatibility tests passed OK")
 
 
 if __name__ == "__main__":

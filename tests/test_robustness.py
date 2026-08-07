@@ -136,7 +136,7 @@ def main():
     _cfg = cfg_mod.load_config(_p)
     run_case("string_config", d10, _cfg)
 
-    print("\nAll robustness tests passed ✓")
+    print("\nAll robustness tests passed OK")
 
 
 if __name__ == "__main__":

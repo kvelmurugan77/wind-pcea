@@ -52,7 +52,7 @@ def main():
     # wake is an estimate derived from per-block free-stream selection -> wider tol
     chk("wake loss %", r1["wake"]["wake_loss_pct"], r2["wake"]["wake_loss_pct"], 25.0)
 
-    print("\nAll blockwise equivalence tests passed ✓")
+    print("\nAll blockwise equivalence tests passed OK")
 
 
 if __name__ == "__main__":
