@@ -82,6 +82,7 @@ input[type=file]{width:100%;padding:8px;border:1px dashed #c9d2e0;border-radius:
 
 INDEX_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>WindPCEA — Post-Construction Energy Yield Assessment</title>
 <meta name="viewport" content="width=device-width,initial-scale=1"><style>__CSS__</style></head><body>
+<div id="updateBanner" style="display:none;background:#fff8ef;border:1px solid #f3ddb8;color:#6b4a12;padding:10px 18px;font-size:13px;text-align:center"></div>
 <div class="hero">
 <h1>WindPCEA — Post-Construction Energy Yield Assessment</h1>
 <p>SCADA-based assessment in the style of commercial (DNV-like) analyses: data QC, availability &amp; loss accounting,
@@ -169,6 +170,20 @@ async function selfTest(){
 <div class="foot">WindPCEA v__VER__ — engineering aid implementing standard industry practice; not a certified assessment.</div>
 </div>
 <script>
+async function checkUpdate(){
+  try{
+    const r = await fetch('/api/version');
+    const j = await r.json();
+    const b = document.getElementById('updateBanner');
+    if(j.latest && j.latest !== j.current){
+      b.style.display = 'block';
+      b.innerHTML = '⚠ You are running <b>v' + j.current + '</b> but <b>v' + j.latest +
+        '</b> is available — <a href="' + j.update_url + '" target="_blank" style="color:#6b4a12;font-weight:700">download the update</a> ' +
+        'to get the latest fixes (footer shows your version).';
+    }
+  }catch(e){}
+}
+checkUpdate();
 async function runAnalyze(sample){
   const st = document.getElementById('status');
   st.style.display = 'block';
@@ -330,6 +345,22 @@ def _quick_summary(r):
     return {"farm": r["meta"]["farm_name"], "gross_mwh": round(r["losses"]["gross_lt_mwh"]),
             "p50": round(p["P50"]), "p75": round(p["P75"]), "p90": round(p["P90"]),
             "availability": round(r["availability"]["farm"]["time_avail_pct"], 2)}
+
+
+@app.route("/api/version")
+def api_version():
+    """Report the running version and the latest release on GitHub, so the
+    UI can warn the user when they are on an outdated build."""
+    import requests as _rq
+    latest = None
+    try:
+        j = _rq.get("https://api.github.com/repos/kvelmurugan77/wind-pcea/releases/latest",
+                    timeout=10).json()
+        latest = j.get("tag_name", "").lstrip("v")
+    except Exception:
+        latest = None
+    return jsonify({"current": WIND_PCEA_VERSION, "latest": latest,
+                    "update_url": "https://github.com/kvelmurugan77/wind-pcea/releases/latest"})
 
 
 @app.route("/selftest")
