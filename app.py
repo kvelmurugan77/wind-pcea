@@ -19,6 +19,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from windpcea import __version__ as WIND_PCEA_VERSION
 from windpcea import config as cfg_mod
+from windpcea import scada as scada_mod
 from windpcea.analysis import run_analysis
 from windpcea.blockwise import run_blockwise
 from windpcea.report import build_html, export_csvs, export_excel
@@ -150,7 +151,38 @@ auto-detection — the rest are detected automatically.</div>
 <button class="btn" id="run" onclick="runAnalyze(false)">Run assessment</button>
 <button class="btn ghost" id="runsample" onclick="runAnalyze(true)" style="margin-left:10px">Run with bundled sample data</button>
 <button class="btn ghost" id="selftest" onclick="selfTest()" style="margin-left:10px">Self-test app</button>
+<button class="btn ghost" id="previewbtn" onclick="previewFile()" style="margin-left:10px">Preview my file</button>
 <div id="stResult"></div>
+<div id="pvResult" style="margin-top:12px"></div>
+<script>
+async function previewFile(){
+  const el = document.getElementById('pvResult');
+  const f = document.getElementById('scada').files[0];
+  if(!f){ el.innerHTML = '<span class="hint">Select a SCADA file first.</span>'; return; }
+  el.innerHTML = '<span class="spin"></span>Reading file header…';
+  const fd = new FormData(); fd.append('scada', f);
+  try{
+    const r = await fetch('/preview', {method:'POST', body: fd});
+    const j = await r.json();
+    if(!r.ok){ el.innerHTML = '⚠ ' + j.error; return; }
+    let h = '<div class="note ok"><b>v' + j.version + ' — what the tool sees in your file</b><br>' +
+      'Detected profile: <b>' + j.profile + '</b><br><b>Columns:</b> ' + j.columns.join(' | ') +
+      '<br><b>First rows:</b><br><pre style="font-size:11px;overflow-x:auto;background:#f7f9fc;padding:8px;border-radius:6px;margin:6px 0">' +
+      j.rows.slice(0,3).map(rr => rr.join(' | ')).join('<br>') + '</pre>';
+    h += '<b>Suggested mapping:</b> ';
+    for(const [k,v] of Object.entries(j.suggested)){ h += '<b>' + k + '</b>→' + v + '  '; }
+    h += '<br><span style="font-size:12px">If power is missing or wrong, fill the ⚙ Advanced fields below and retry.</span></div>';
+    // auto-fill advanced mapping from suggestions
+    const map = {'power_col':'power','ws_col':'ws','turbine_col':'turbine','ts_col':'timestamp','dir_col':'dir','temp_col':'temp','status_col':'status'};
+    for(const [field, key] of Object.entries(map)){
+      if(j.suggested[key] && !document.getElementById(field).value){
+        document.getElementById(field).value = j.suggested[key];
+      }
+    }
+    el.innerHTML = h;
+  }catch(e){ el.innerHTML = '⚠ ' + e; }
+}
+</script>
 <script>
 async function selfTest(){
   const el = document.getElementById('stResult');
@@ -361,6 +393,45 @@ def api_version():
         latest = None
     return jsonify({"current": WIND_PCEA_VERSION, "latest": latest,
                     "update_url": "https://github.com/kvelmurugan77/wind-pcea/releases/latest"})
+
+
+@app.route("/preview", methods=["POST"])
+def preview():
+    """Show the uploaded file's columns + first rows, and what the tool
+    would map them to. Removes all guessing about column names."""
+    import pandas as pd
+    f = request.files.get("scada")
+    if not f:
+        return jsonify({"error": "no file"}), 400
+    path = os.path.join(RUNS, "_preview_tmp.csv")
+    os.makedirs(RUNS, exist_ok=True)
+    f.save(path)
+    try:
+        cols, kw = scada_mod._sniff_csv(path)
+        raw = pd.read_csv(path, nrows=6, **kw)
+        rows = raw.fillna("").astype(str).values.tolist()
+        # suggested mapping using the same logic the analysis uses
+        from windpcea import oem as oem_mod
+        profile = oem_mod.detect_profile(cols)
+        aliases = oem_mod.profile_aliases(profile)
+        suggest = {}
+        for key, cands in [("power", aliases["power"] + ["grd_prod", "prod", "active power"]),
+                           ("ws", aliases["ws"] + ["amb_wind", "wind"]),
+                           ("turbine", aliases["turbine"] + ["assetnam"]),
+                           ("timestamp", aliases["timestamp"] + ["pctimest"]),
+                           ("dir", aliases["dir"] + ["nac_direc"]),
+                           ("temp", aliases["temp"] + ["amb_tems"]),
+                           ("status", aliases["status"] + ["sys_stats"])]:
+            for c in cols:
+                nc = oem_mod.normalize_col_name(c)
+                if any(oem_mod.normalize_col_name(a) in nc for a in cands):
+                    suggest[key] = c
+                    break
+        return jsonify({"columns": cols, "rows": rows,
+                        "profile": profile, "suggested": suggest,
+                        "version": WIND_PCEA_VERSION})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/selftest")
