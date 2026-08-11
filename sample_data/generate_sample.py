@@ -167,10 +167,17 @@ for i, tid in enumerate(range(1, N_TURB + 1)):
         m = (PERIOD >= "2024-03-01") & (PERIOD < "2024-03-15")
         ws_i[m] = 6.2
 
+    # ambient wind direction: farm-wide (first turbine's dir at each ts) with
+    # per-turbine yaw offset planted so the yaw analysis has a signal:
+    # T03 lags +8 deg, T07 leads -5 deg, others near zero
+    yaw_plant = {3: 8.0, 7: -5.0}
+    amb = (dirs + rng.normal(0, 1.5, len(t))) % 360.0
+    nac = (amb + yaw_plant.get(tid, rng.normal(0, 0.6))) % 360.0
     rows.append(pd.DataFrame({
         "timestamp": t, "turbine_id": f"T{tid:02d}",
         "power_kw": power, "wind_speed_mps": ws_i,
-        "nacelle_dir_deg": wdir, "temp_c": temp, "status_code": status,
+        "wind_dir_deg": amb, "nacelle_dir_deg": nac,
+        "temp_c": temp, "status_code": status,
     }))
 
 scada = pd.concat(rows, ignore_index=True)

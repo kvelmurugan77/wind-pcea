@@ -316,6 +316,20 @@ def _empty_fig(text):
     return fig
 
 
+def yaw_histogram(hist_df, title="Yaw offset distribution (wind dir - nacelle)"):
+    if hist_df is None or len(hist_df) == 0:
+        return _empty_fig("No yaw offset data")
+    fig, ax = plt.subplots(figsize=(7.2, 3.6))
+    ax.bar(hist_df["offset_bin"], hist_df["count"], width=5.0,
+           color=NAVY, alpha=0.8, edgecolor="white")
+    ax.axvline(0, color=ORANGE, lw=1.6, ls="--", label="0° (perfect alignment)")
+    ax.set_xlabel("Offset (deg)"); ax.set_ylabel("Count")
+    ax.set_title(title)
+    ax.legend(frameon=False)
+    ax.set_xlim(-45, 45)
+    return fig
+
+
 def wake_polar(sector_table, title="Mean wake deficit by sector"):
     """Polar chart of mean wake deficit per direction sector.
 
@@ -360,11 +374,18 @@ def loss_waterfall(tree, gross_mwh, net_mwh, title="Loss tree (long-term AEP)"):
     for i in range(len(labels) - 1):
         bottom = min(running[i], running[i + 1])
         height = abs(running[i + 1] - running[i])
+        # a LOSS reduces energy -> red; a GAIN (negative loss, e.g. curve
+        # overperformance) increases energy -> green; ~0 -> grey
         color = RED if height > 0.0001 and running[i + 1] < running[i] else (
-            GREEN if running[i + 1] > running[i] else GREY)
+            GREEN if height > 0.0001 and running[i + 1] > running[i] else GREY)
         ax.bar(x[i], height, bottom=bottom, color=color, alpha=0.85, width=0.62)
         ax.text(x[i], running[i], f"{running[i]:,.0f}", ha="center", va="bottom",
                 fontsize=8, color="#444")
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(facecolor=RED, label="Loss"),
+                       Patch(facecolor=GREEN, label="Gain (overperformance)"),
+                       Patch(facecolor=GREY, label="≈0")],
+              loc="lower left", fontsize=8, frameon=False)
     ax.bar(x[-1], running[-1], bottom=0, color=NAVY, width=0.62)
     ax.text(x[-1], running[-1], f"{running[-1]:,.0f}", ha="center", va="bottom",
             fontsize=8.5, fontweight="bold", color=NAVY)

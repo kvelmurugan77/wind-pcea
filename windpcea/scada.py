@@ -269,7 +269,9 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
             df = df.drop(columns=[turb_col])
         pcol = _find_col(df, aliases["power"])
         for key, cands in [("power_kw", aliases["power"]), ("ws", aliases["ws"]),
-                           ("dir_deg", aliases["dir"]), ("temp_c", aliases["temp"]),
+                           ("dir_deg", aliases["dir"]),
+                           ("wind_dir_deg", aliases.get("winddir", [])),
+                           ("temp_c", aliases["temp"]),
                            ("status", aliases["status"])]:
             col = _find_col(df, cands)
             if col is not None:
@@ -288,6 +290,11 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
                     df[key] = vals
                 if col != key:
                     df = df.drop(columns=[col])
+        if "wind_dir_deg" in df.columns and "dir_deg" in df.columns:
+            # wind_dir_deg must be a DIFFERENT column than nacelle dir;
+            # otherwise drop it (only nacelle dir available)
+            if (df["wind_dir_deg"] == df["dir_deg"]).all():
+                df = df.drop(columns=["wind_dir_deg"])
         # explicit curtailment flag
         ccol = _find_col(df, ["curtail", "derat", "power limit", "limit"])
         if ccol is not None:
@@ -322,7 +329,7 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
                 df = df.drop(columns=[wcol])
 
     keep = [c for c in ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
-                        "temp_c", "status", "curt_flag"] if c in df.columns]
+                        "wind_dir_deg", "temp_c", "status", "curt_flag"] if c in df.columns]
     df = df[keep].dropna(subset=["timestamp"]).sort_values(["turbine", "timestamp"])
 
     if "power_kw" not in df.columns:
@@ -363,6 +370,8 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
     df["ws"] = df["ws"].clip(lower=0.0, upper=60.0)
     if "dir_deg" in df.columns:
         df["dir_deg"] = pd.to_numeric(df["dir_deg"], errors="coerce") % 360.0
+    if "wind_dir_deg" in df.columns:
+        df["wind_dir_deg"] = pd.to_numeric(df["wind_dir_deg"], errors="coerce") % 360.0
     if "curt_flag" in df.columns:
         df["curt_flag"] = (df["curt_flag"] > 0).astype(int)
     return df.reset_index(drop=True), profile_key
@@ -383,7 +392,7 @@ def _status_to_numeric(series):
 
 def resample_10min(df):
     """Resample to a regular 10-minute grid (mean of physicals, last status)."""
-    num_cols = [c for c in ["power_kw", "ws", "dir_deg", "temp_c"] if c in df.columns]
+    num_cols = [c for c in ["power_kw", "ws", "dir_deg", "wind_dir_deg", "temp_c"] if c in df.columns]
     df = df.set_index("timestamp").sort_index()
 
     agg = {c: "mean" for c in num_cols}
@@ -458,7 +467,7 @@ def _matches(nc, aliases):
 # canonical internal column names — always kept (files may already be in
 # the tool's own long format, e.g. re-using a previous export)
 CANONICAL_COLS = ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
-                  "temp_c", "status", "curt_flag"]
+                  "wind_dir_deg", "temp_c", "status", "curt_flag"]
 
 
 def _needed_columns(columns, aliases):

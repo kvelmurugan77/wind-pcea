@@ -28,7 +28,9 @@ from . import oem as oem_mod
 from . import powercurve as pc_mod
 from . import qc as qc_mod
 from . import scada as scada_mod
+from . import gapfill as gapfill_mod
 from . import uncertainty as unc_mod
+from . import yaw as yaw_mod
 from . import wake as wake_mod
 
 
@@ -163,6 +165,12 @@ def run_analysis(cfg, scada_path, outdir=None):
     gross_y = df.groupby(df["timestamp"].dt.year)["expected_energy_kwh"].agg(
         lambda s: s.sum() / 1000.0).rename("gross_mwh")
     yearly = yearly.join(gross_y).reset_index().rename(columns={"timestamp": "year"})
+
+    # ---------------- gap filling (traceable) ----------------
+    df_gap, gap_summary = gapfill_mod.gap_fill(df, cfg, interp_power)
+    n_filled = int(gap_summary["total_filled"].sum()) if len(gap_summary) else 0
+    # yaw error analysis (uses raw, unfilled data for integrity)
+    yaw_res = yaw_mod.yaw_error_analysis(df)
 
     # ---------------- wake analysis ----------------
     # only exclude turbines with a significant share of anemometer-fault rows
@@ -304,6 +312,8 @@ def run_analysis(cfg, scada_path, outdir=None):
         "full_load_hours": net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb),
         "v_arr": v_arr, "p_arr": p_arr,
         "wind_stats": wind_stats,
+        "gap_fill": {"df": df_gap, "summary": gap_summary, "n_filled": n_filled},
+        "yaw": yaw_res,
         "monthly_downtime": monthly_downtime,
         "monthly_perf": monthly_perf,
         "yearly": yearly,
@@ -318,30 +328,38 @@ def run_files(config_path, scada_path, outdir=None):
 
 def _wind_stats_from_df(df):
     """Wind-resource statistics for the report: rose histogram, monthly and
-    diurnal mean wind speed, wind-speed distribution, P-P sample."""
-    op = df[df["flag"] == 0]
-    ws = op["ws"].dropna()
+    diurnal mean wind speed, wind-speed distribution (FULL range 0-40 m/s,
+    including below cut-in — uses all valid records, not just operating),
+    P-P sample (operating rows only)."""
+    valid = df[df["flag"].isin((0, 1))]          # operating + below cut-in
+    if len(valid) == 0:
+        valid = df[df["flag"].notna()]
+    ws = valid["ws"].dropna()
     stats = {"rose": {}, "monthly_ws": pd.DataFrame(), "diurnal_ws": pd.DataFrame(),
              "ws_hist": pd.DataFrame(), "pp_sample": pd.DataFrame()}
-    if len(op) == 0:
+    if len(valid) == 0:
         return stats
-    if "dir_deg" in op.columns:
-        m = op["dir_deg"].notna() & op["ws"].notna()
-        d5 = (op.loc[m, "dir_deg"] // 5 * 5).astype(int).values
-        w1 = op.loc[m, "ws"].astype(int).values
+    if "dir_deg" in valid.columns:
+        m = valid["dir_deg"].notna() & valid["ws"].notna()
+        d5 = (valid.loc[m, "dir_deg"] // 5 * 5).astype(int).values
+        w1 = valid.loc[m, "ws"].astype(int).values
         comb = d5 * 1000 + w1
         for k, c in zip(*np.unique(comb, return_counts=True)):
             stats["rose"][(int(k // 1000), int(k % 1000))] = int(c)
-    mm = op.groupby(op["timestamp"].dt.to_period("M"))["ws"].mean()
+    mm = valid.groupby(valid["timestamp"].dt.to_period("M"))["ws"].mean()
     stats["monthly_ws"] = pd.DataFrame({"month": mm.index.astype(str),
                                         "ws_mps": mm.values})
-    hh = op.groupby(op["timestamp"].dt.hour)["ws"].mean()
+    hh = valid.groupby(valid["timestamp"].dt.hour)["ws"].mean()
     stats["diurnal_ws"] = pd.DataFrame({"hour": hh.index, "ws_mps": hh.values})
+    # FULL wind-speed range, including the 0-3 m/s bins (below cut-in)
     hist, edges = np.histogram(ws.values, bins=np.arange(0, 42, 1.0))
     stats["ws_hist"] = pd.DataFrame({"bin_center": edges[:-1] + 0.5, "count": hist})
+    # P-P sample: operating rows only
+    op = df[df["flag"] == 0]
     n = len(op)
-    take = op.sample(min(30000, n), random_state=1)
-    stats["pp_sample"] = take[["ws", "power_kw", "expected_power_kw"]].reset_index(drop=True)
+    if n:
+        take = op.sample(min(30000, n), random_state=1)
+        stats["pp_sample"] = take[["ws", "power_kw", "expected_power_kw"]].reset_index(drop=True)
     return stats
 
 

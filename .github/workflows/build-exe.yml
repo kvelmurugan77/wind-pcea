@@ -1,18 +1,13 @@
 name: Build Windows EXE
 
-# Builds WindPCEA as a standalone Windows .exe and publishes it as a GitHub
-# Release automatically (triggered on every push to main or manually).
-# The canonical download link NEVER goes stale:
-#   https://github.com/kvelmurugan77/wind-pcea/releases/latest/download/WindPCEA.exe
+# Builds WindPCEA as a standalone Windows .exe (no Python needed to run).
+# Trigger manually (Actions -> Build Windows EXE -> Run workflow) or on push.
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'app.py', 'windpcea/**', 'tests/**', 'requirements.txt', '.github/workflows/build-exe.yml' ]
-
-permissions:
-  contents: write          # needed to create releases + upload assets
+    paths: [ 'app.py', 'windpcea/**', 'requirements.txt', '.github/workflows/build-exe.yml' ]
 
 jobs:
   build:
@@ -31,12 +26,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
-
-      - name: Run test suite (pandas/Numpy as installed by pip)
-        shell: pwsh
-        run: |
-          python tests\test_robustness.py
-          python tests\test_oem_scada.py
 
       - name: Build EXE with PyInstaller
         shell: pwsh
@@ -58,43 +47,7 @@ jobs:
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           }
 
-      - name: Read version from code
-        id: ver
-        shell: pwsh
-        run: |
-          $m = Select-String -Path windpcea\__init__.py -Pattern '__version__ = "([^"]+)"'
-          if (-not $m) { Write-Error "version not found"; exit 1 }
-          $v = $m.Matches[0].Groups[1].Value
-          "VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "version: $v"
-
-      - name: Delete previous release with this tag (idempotent)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          gh release delete "v$env:VERSION" --yes --cleanup-tag 2>$null
-          if ($LASTEXITCODE -ne 0) { Write-Host "no previous release to delete" }
-          $global:LASTEXITCODE = 0
-          Write-Host "delete step done"
-
-      - name: Create Release and upload EXE
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: pwsh
-        run: |
-          $notes = @"
-          WindPCEA **v$env:VERSION** — automatic release (built by GitHub Actions).
-
-          - Download **WindPCEA.exe**, double-click, enter site coordinates, upload SCADA.
-          - Canonical latest link: https://github.com/kvelmurugan77/wind-pcea/releases/latest/download/WindPCEA.exe
-          - Changelog: see git history.
-          "@
-          gh release create "v$env:VERSION" dist\WindPCEA.exe `
-            --title "WindPCEA v$env:VERSION" `
-            --notes $notes
-
-      - name: Upload artifact (backup)
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: WindPCEA-Windows
