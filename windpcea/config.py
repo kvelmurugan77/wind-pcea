@@ -21,6 +21,10 @@ DEFAULTS = {
     "oem_profile": "auto",         # auto | generic | vestas | sgre | suzlon | envision | nordex | goldwind | inox
     "column_aliases": {},          # optional extra column-name aliases per kind
     "column_map": {},              # exact column names: {"power": "Active Power (kW)", "ws": "...", "turbine": "...", "timestamp": "...", "dir": "...", "temp": "...", "status": "..."}
+    "layout_file": None,           # CSV: turbine,x,y (metres) for layout-based wake modelling
+    "wake_model": "layout",        # layout (Bastankhah-Gaussian, needs layout_file) | scada | both
+    "wake_ti": 0.10,               # turbulence intensity for the wake model
+    "ct_curve": None,              # optional CSV: v_mps, ct
     "csv_chunk_rows": 1000000,     # rows per chunk when streaming large CSVs
     "use_float32": False,          # halve numeric memory (slightly lower precision)
     "large_file_mode": "auto",     # auto | true (blockwise out-of-core for 1GB+) | false

@@ -634,6 +634,45 @@ warranted curve is computed over the measured operating wind distribution.</p>
 method (mean of the least-waked turbines per direction sector; anemometer-faulted turbines excluded). The wake deficit
 per turbine per sector is 1 − ws<sub>i</sub>/ws<sub>free</sub>; the wake energy loss is the difference
 between the warranted-curve energy at free-stream and at nacelle speed over operating intervals.</p>""")
+    # layout-based wake section (when a layout file was provided)
+    wl = wk.get("layout")
+    if wl and isinstance(wl, dict) and "farm_loss_pct" in wl:
+        parts.append("<h3>Layout-based wake model (Bastankhah-Gaussian)</h3>")
+        parts.append(
+            "<p class='lead'>Wake losses are also calculated from the turbine layout using the "
+            "Bastankhah & Porte-Agel (2014) Gaussian wake model (sigma = k.x + sigma0, "
+            "rotor-averaged partial shadowing, sqrt-of-sums superposition, thrust coefficient "
+            "from a standard CT curve, turbulence intensity " + str(cfg.get("wake_ti", 0.10)) +
+            "), weighted by the measured wind rose. This is the DNV-grade layout-based method "
+            "used in PyWake/FLORIS-class tools.</p>")
+        parts.append(_chart(lambda: pl.fig_to_b64(pl.layout_map(wl["layout"], wl["per_turbine"])),
+                            'Layout map', 'Layout map unavailable'))
+        parts.append(
+            "<div class='note'><b>Layout-based wake loss: " + _pct(wl['farm_loss_pct']) +
+            "</b> of gross (free-stream energy " + _fmt(wl['energy_free_mwh']) +
+            " MWh vs waked " + _fmt(wl['energy_waked_mwh']) +
+            " MWh over the measured rose). <b>Method used in the loss tree: " +
+            str(wk.get('wake_model_used', 'layout')) +
+            "</b>. SCADA reference-turbine cross-check: " + _pct(wk['wake_loss_pct']) +
+            " - the layout model is the primary estimate; the SCADA value is shown for validation.</div>")
+        parts.append(html_table(
+            wl["per_turbine"].round(2),
+            formats={"x": lambda v: _fmt(v, 0), "y": lambda v: _fmt(v, 0),
+                     "energy_free_mwh": lambda v: _fmt(v, 0),
+                     "energy_waked_mwh": lambda v: _fmt(v, 0),
+                     "wake_loss_mwh": lambda v: _fmt(v, 0),
+                     "wake_loss_pct": lambda v: _pct(v, 2)},
+            caption="Per-WTG layout-based wake loss"))
+        parts.append(html_table(
+            wl["sector_table"].round(4),
+            formats={"freq": lambda v: f"{100*v:.1f}%",
+                     "mean_deficit": lambda v: _pct(v*100, 2),
+                     "loss_pct": lambda v: _pct(v, 2)},
+            caption="Layout-based wake loss by wind direction sector"))
+    else:
+        if wl and isinstance(wl, dict) and "error" in wl:
+            parts.append(f"<div class='note'><b>Layout wake model error:</b> {wl['error']}</div>")
+
     if wk["sector_table"].empty:
         parts.append(f"""<div class="note"><b>Wake analysis could not be performed:</b> no usable operating
 records were found (check that the SCADA status-code mapping in the config matches your OEM codes, and that

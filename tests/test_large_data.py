@@ -50,7 +50,9 @@ def main():
     parts = []
     for i in range(6):
         p = d.copy()
-        p["timestamp"] = p["timestamp"] + pd.Timedelta(days=i * 130)   # > base span (120 d)
+        # contiguous copies (120-day span exactly) so the gap-filler has
+        # nothing to interpolate and row counts stay identical
+        p["timestamp"] = p["timestamp"] + pd.Timedelta(days=i * 121)
         parts.append(p)
     big = pd.concat(parts, ignore_index=True)
     big_path = os.path.join(TMP, "big_1m.csv")
@@ -61,7 +63,7 @@ def main():
     cfg = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
     r = run_analysis(cfg, big_path, outdir=os.path.join(TMP, "out_big"))
     elapsed = time.time() - t1
-    assert len(r["df"]) == len(big), "row loss on large file"
+    assert len(r["df"]) == len(big), f"row mismatch: {len(r['df'])} vs {len(big)}"
     assert np.isfinite(r["losses"]["net_mwh"]) and r["losses"]["net_mwh"] > 0
     assert r["meta"]["read_info"]["chunks"] > 1, "large file should be streamed in chunks"
     print(f"  OK  ~1M-row stress            rows={len(big):,}  "

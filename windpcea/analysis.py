@@ -182,6 +182,28 @@ def run_analysis(cfg, scada_path, outdir=None):
     gross_period_mwh = float(df.loc[valid_gross, "expected_energy_kwh"].sum() / 1000.0)
     wake["wake_loss_pct"] = wake_mod.wake_loss_share(wake["wake_energy_mwh"], gross_period_mwh)
 
+    # layout-based wake model (Bastankhah-Gaussian) when a layout is supplied
+    wake_layout = None
+    if cfg.get("layout_file") and os.path.exists(cfg["layout_file"]):
+        from . import wake_model as wm
+        try:
+            layout = wm.load_layout(cfg["layout_file"])
+            if len(layout) > 1:
+                rose = wm.rose_from_wind_stats(wind_stats.get("rose", {}))
+                if len(rose) > 0:
+                    wake_layout = wm.farm_wake_loss(
+                        layout, rose, v_arr, p_arr,
+                        D=float(cfg.get("rotor_diameter_m", 130)),
+                        hub=float(cfg["hub_height_m"]),
+                        TI=float(cfg.get("wake_ti", 0.10)),
+                        ct_curve=None,
+                        cut_in=float(cfg["cut_in_mps"]),
+                        cut_out=float(cfg["cut_out_mps"]))
+                    wake_layout["layout"] = layout
+        except Exception as e:
+            wake_layout = {"error": str(e)}
+    wake["layout"] = wake_layout
+
     # ---------------- performance (power curve deviation) ----------------
     op = df[df["flag"] == 0]
     # turbine performance = shortfall at the turbine's own wind speed,
@@ -271,8 +293,19 @@ def run_analysis(cfg, scada_path, outdir=None):
     else:
         gross_lt_mwh = gross_lt_mwh_a
         lt_method_used = "Weibull x warranted curve (Method A)"
+    wake_used_mwh = wake["wake_energy_mwh"]
+    wake_model_used = "SCADA reference-turbine"
+    if wake.get("layout") and isinstance(wake["layout"], dict) \
+            and "farm_loss_pct" in wake["layout"]:
+        # layout-based (Bastankhah-Gaussian) wake loss applied to gross AEP
+        if cfg.get("wake_model", "layout") in ("layout", "both"):
+            wake_model_used = "Layout-based (Bastankhah-Gaussian)"
+            # express the layout wake as an equivalent period energy so the
+            # loss tree's % of gross equals the model's farm loss % exactly
+            wake_used_mwh = wake["layout"]["farm_loss_pct"] / 100.0 * gross_period_mwh
     tree, net_mwh, recon = losses_mod.build_loss_tree(
-        cfg, energy, wake["wake_energy_mwh"], perf_energy_mwh, gross_period_mwh, gross_lt_mwh)
+        cfg, energy, wake_used_mwh, perf_energy_mwh, gross_period_mwh, gross_lt_mwh)
+    wake["wake_model_used"] = wake_model_used
 
     cf = 100.0 * net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb * 8760.0)
     benchmark = None
