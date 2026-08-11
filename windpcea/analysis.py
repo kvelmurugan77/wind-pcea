@@ -133,7 +133,8 @@ def run_analysis(cfg, scada_path, outdir=None):
     coverage_pct = 100.0 * len(df) / max(1.0, n_turb * expected_rows)
     qc = {"flag_counts": flag_counts, "coverage_pct": float(coverage_pct),
           "expected_rows_per_turbine": expected_rows,
-          "rows": len(df), "n_turbines": n_turb}
+          "rows": len(df), "n_turbines": n_turb,
+          "warnings": _qc_warnings(df, flag_counts)}
 
     # ---------------- energy accounting & availability ----------------
     energy = avail_mod.energy_accounting(df, cfg)
@@ -364,3 +365,33 @@ def _monthly_downtime_causes(df, cfg):
         for m, v in g.items():
             rows.append({"month": m, "cause": "Other", "loss_mwh": float(v)})
     return pd.DataFrame(rows)
+
+
+def _qc_warnings(df, flag_counts):
+    """Diagnostics when results look implausible (usually a status-code
+    mapping mismatch or wrong units). Surfaced in the report & console."""
+    warnings = []
+    total = max(1, len(df))
+    op_share = float((df["flag"] == 0).sum()) / total
+    has_status = "status" in df.columns and df["status"].notna().any()
+    if op_share < 0.10:
+        if has_status:
+            warnings.append(
+                f"Only {100*op_share:.1f}% of records are classified as operating — the "
+                "status-code mapping in the config may not match this file. Check "
+                "'status_codes' (e.g. Envision uses operating=[0,1], fault=[4]).")
+        else:
+            warnings.append(
+                f"Only {100*op_share:.1f}% of records are classified as operating — check "
+                "that power is in kW (not MW) and wind speed in m/s.")
+    else:
+        down = 0
+        if len(flag_counts):
+            fc = flag_counts.set_index("flag")
+            if 2 in fc.index:
+                down = int(fc.loc[2, "count"])
+        if has_status and down / total > 0.5:
+            warnings.append(
+                f"{100*down/total:.1f}% of records are downtime — the status-code mapping "
+                "may be inverted or wrong for this file. Check 'status_codes'.")
+    return warnings

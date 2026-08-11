@@ -425,7 +425,13 @@ def _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax, n_turb,
           "pct_of_records": 100.0 * acc.flag_counts.get(f, 0) / max(1, rows)}
          for f in sorted(qc_mod.FLAG_NAMES) if acc.flag_counts.get(f, 0)])
     qc = {"flag_counts": flag_counts, "coverage_pct": 100.0 * rows / max(1, n_turb * expected_rows),
-          "expected_rows_per_turbine": expected_rows, "rows": rows, "n_turbines": n_turb}
+          "expected_rows_per_turbine": expected_rows, "rows": rows, "n_turbines": n_turb,
+          "warnings": []}
+    op_share = acc.flag_counts.get(0, 0) / max(1, rows)
+    if op_share < 0.10:
+        qc["warnings"].append(
+            f"Only {100*op_share:.1f}% of records are classified as operating — the "
+            "status-code mapping in the config may not match this file (check 'status_codes').")
 
     # ---- energy & availability -------------------------------------------
     energy = {"E_actual_mwh": acc.E_actual_mwh, "E_expected_mwh": acc.E_expected_mwh,

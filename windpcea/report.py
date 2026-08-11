@@ -341,6 +341,11 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
 <div class="s">{_fmt(r['qc']['rows'])} records</div></div>
 </div>""")
 
+    # surface QC warnings prominently (mapping mismatches, implausible results)
+    for _w in (r["qc"].get("warnings") or []):
+        parts.append(f"<div class='note' style='border-left-color:#C0504D;background:#fdf0ef;"
+                     f"color:#7a2e2a'><b>⚠ {_w}</b></div>")
+
     # DNV-style key results table
     kr = pd.DataFrame({
         "parameter": ["Gross energy yield (long-term, P50)",
@@ -962,6 +967,10 @@ def console_summary(r):
     p = r["uncertainty"]["p"]
     lines = [
         f"Post-Construction Energy Yield Assessment — {r['meta']['farm_name']}",
+    ]
+    for _w in (r["qc"].get("warnings") or []):
+        lines.append(f"  ! WARNING: {_w}")
+    lines += [
         f"  Period: {r['meta']['record_start']} → {r['meta']['record_end']}  "
         f"({r['meta']['num_turbines']} turbines, {r['meta']['interval_h']*60:g} min data)",
         f"  Coverage: {r['qc']['coverage_pct']:.1f}%   "
