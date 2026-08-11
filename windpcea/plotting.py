@@ -256,6 +256,7 @@ def ws_distribution(ws_hist, weib, title="Wind speed distribution (10-min record
     total = ws_hist["count"].sum()
     ax.bar(ws_hist["bin_center"], 100.0 * ws_hist["count"] / total,
            width=1.0, color=TEAL, alpha=0.65, edgecolor="white")
+    ax.set_xlim(0, min(40, ws_hist["bin_center"].max() + 1))
     if weib:
         A, k = weib
         v = np.linspace(0.25, 40, 300)
@@ -316,20 +317,6 @@ def _empty_fig(text):
     return fig
 
 
-def yaw_histogram(hist_df, title="Yaw offset distribution (wind dir - nacelle)"):
-    if hist_df is None or len(hist_df) == 0:
-        return _empty_fig("No yaw offset data")
-    fig, ax = plt.subplots(figsize=(7.2, 3.6))
-    ax.bar(hist_df["offset_bin"], hist_df["count"], width=5.0,
-           color=NAVY, alpha=0.8, edgecolor="white")
-    ax.axvline(0, color=ORANGE, lw=1.6, ls="--", label="0° (perfect alignment)")
-    ax.set_xlabel("Offset (deg)"); ax.set_ylabel("Count")
-    ax.set_title(title)
-    ax.legend(frameon=False)
-    ax.set_xlim(-45, 45)
-    return fig
-
-
 def wake_polar(sector_table, title="Mean wake deficit by sector"):
     """Polar chart of mean wake deficit per direction sector.
 
@@ -374,18 +361,17 @@ def loss_waterfall(tree, gross_mwh, net_mwh, title="Loss tree (long-term AEP)"):
     for i in range(len(labels) - 1):
         bottom = min(running[i], running[i + 1])
         height = abs(running[i + 1] - running[i])
-        # a LOSS reduces energy -> red; a GAIN (negative loss, e.g. curve
-        # overperformance) increases energy -> green; ~0 -> grey
-        color = RED if height > 0.0001 and running[i + 1] < running[i] else (
-            GREEN if height > 0.0001 and running[i + 1] > running[i] else GREY)
+        # losses (downward steps) are RED; gains (upward, e.g. negative loss)
+        # are GREEN; zero-height bars are GREY
+        if running[i + 1] < running[i] - 0.001:
+            color = RED
+        elif running[i + 1] > running[i] + 0.001:
+            color = GREEN
+        else:
+            color = GREY
         ax.bar(x[i], height, bottom=bottom, color=color, alpha=0.85, width=0.62)
         ax.text(x[i], running[i], f"{running[i]:,.0f}", ha="center", va="bottom",
                 fontsize=8, color="#444")
-    from matplotlib.patches import Patch
-    ax.legend(handles=[Patch(facecolor=RED, label="Loss"),
-                       Patch(facecolor=GREEN, label="Gain (overperformance)"),
-                       Patch(facecolor=GREY, label="≈0")],
-              loc="lower left", fontsize=8, frameon=False)
     ax.bar(x[-1], running[-1], bottom=0, color=NAVY, width=0.62)
     ax.text(x[-1], running[-1], f"{running[-1]:,.0f}", ha="center", va="bottom",
             fontsize=8.5, fontweight="bold", color=NAVY)
@@ -393,6 +379,11 @@ def loss_waterfall(tree, gross_mwh, net_mwh, title="Loss tree (long-term AEP)"):
     ax.set_ylabel("Energy (MWh)")
     ax.set_title(title)
     ax.set_ylim(0, gross_mwh * 1.12)
+    from matplotlib.patches import Patch
+    ax.legend(handles=[Patch(facecolor=RED, label="Loss"),
+                       Patch(facecolor=GREEN, label="Gain"),
+                       Patch(facecolor=GREY, label="No change")],
+              loc="lower left", frameon=False, fontsize=8)
     return fig
 
 
@@ -416,4 +407,36 @@ def mc_histogram(samples, p, title="Monte Carlo net AEP distribution"):
     ax.set_xlabel("Net AEP (MWh)"); ax.set_ylabel("Probability density")
     ax.set_title(title)
     ax.legend(frameon=False)
+    return fig
+
+
+def yaw_plot(yaw, title="Yaw misalignment screening (power ratio vs yaw error)"):
+    """Scatter of power ratio vs yaw error with the pooled quadratic fit."""
+    pooled = yaw.get("pooled")
+    per = yaw.get("per_turbine")
+    if pooled is None or len(pooled) == 0:
+        return _empty_fig("No yaw analysis data (need wind direction + nacelle direction)")
+    fig, ax = plt.subplots(figsize=(7.2, 4.6))
+    ax.scatter(pooled["yaw_err"], pooled["pr"], s=4, alpha=0.12, color=TEAL, rasterized=True)
+    # bin means for clarity
+    b = np.arange(-40, 41, 2.0)
+    idx = np.digitize(pooled["yaw_err"], b)
+    m = pooled.groupby(idx)["pr"].mean()
+    xs = b[:-1] + 1.0
+    ax.plot(xs[m.index], m.values, color=NAVY, lw=2, label="Bin mean power ratio")
+    # pooled quadratic across all turbines
+    ye = pooled["yaw_err"].values
+    pr = pooled["pr"].values
+    A = np.vstack([ye ** 2, ye, np.ones_like(ye)]).T
+    coef, *_ = np.linalg.lstsq(A, pr, rcond=None)
+    a, bq, c = coef
+    if a < 0:
+        xv = np.linspace(-40, 40, 200)
+        ax.plot(xv, a * xv ** 2 + bq * xv + c, color=ORANGE, lw=2.2,
+                label="Quadratic fit (pooled)")
+    ax.axvline(0, color=GREY, ls="--", lw=1)
+    ax.set_xlabel("Yaw error = wind direction − nacelle direction (deg)")
+    ax.set_ylabel("Power ratio (measured / warranted)")
+    ax.set_title(title)
+    ax.legend(frameon=False, fontsize=8)
     return fig

@@ -151,17 +151,14 @@ class Accumulator:
                                               "energy_kwh"].sum() / 1000.0)
             yy["hours"] += len(g) * dt_h
 
-        # operating-row statistics (vectorised); wind stats use ALL valid
-        # records incl. below cut-in for a full-range wind distribution
+        # operating-row statistics (vectorised)
         op = dfb[dfb["flag"] == 0]
         if len(op):
             self.ws_sum += float(op["ws"].sum())
             self.ws_sumsq += float((op["ws"] ** 2).sum())
             self.ws_n += int(len(op))
             self.bin_parts.append((tid, _bins_frame(op, self.cfg)))
-        wvalid = dfb[dfb["flag"].isin((0, 1))]
-        if len(wvalid):
-            self._wind_accum(wvalid)
+            self._wind_accum(op)
             # pp reservoir
             self.pp_n += len(op)
             want = self.pp_cap - sum(len(p) for p in self.pp_rows)

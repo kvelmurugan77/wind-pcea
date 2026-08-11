@@ -134,7 +134,7 @@ def _conclusions_html(r, sens):
         recs.append("No material performance issues identified; the wind farm is performing "
                     "in line with expectations.")
     r["conclusions"] = {"findings": pts, "recommendations": recs}
-    html = ["<h2>10&nbsp;&nbsp;Conclusions &amp; recommendations</h2>",
+    html = ["<h2>11&nbsp;&nbsp;Conclusions &amp; recommendations</h2>",
             "<h3>Key findings</h3><ul class='det'>"]
     html += [f"<li>{p}</li>" for p in pts]
     html.append("</ul><h3>Recommendations</h3><ul class='det'>")
@@ -318,12 +318,6 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
 <span class="badge">IEC 61400-26 availability</span>
 <span class="badge">MCP long-term correction</span>
 <span class="badge">Monte Carlo P-values</span>
-<div style="margin-top:14px">
-  <a class="btn" href="./pceya_report.html" download style="display:inline-block;background:#fff;color:#14365D;font-weight:700;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;margin-right:8px">&#8681; Download report (HTML)</a>
-  <a class="btn" href="./pceya_results.xlsx" download style="display:inline-block;background:#fff;color:#14365D;font-weight:700;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;margin-right:8px">&#8681; Excel workbook</a>
-  <a class="btn" href="./flagged_scada_10min.csv" download style="display:inline-block;background:#fff;color:#14365D;font-weight:700;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;margin-right:8px">&#8681; Flagged SCADA (CSV)</a>
-  <a class="btn" href="./gap_filled_scada_10min.csv" download style="display:inline-block;background:#fff;color:#14365D;font-weight:700;padding:8px 16px;border-radius:8px;text-decoration:none;font-size:13px;margin-right:8px">&#8681; Gap-filled SCADA (CSV)</a>
-</div>
 </header>""")
 
     # ---------------- executive summary ----------------
@@ -417,6 +411,16 @@ multi-year / multi-hundred-turbine exports are handled within bounded memory.</d
                                                "pct_of_records": "share"}),
         formats={"share": lambda v: _pct(v, 2)},
         caption="Operating-state classification of all SCADA records"))
+    gs = r.get("gap_stats") or {"filled_rows": 0, "expected_rows": 0, "fill_pct": 0.0}
+    parts.append(
+        "<div class='note'><b>Gap filling (data completeness):</b> "
+        + _fmt(gs.get("filled_rows", 0)) + " of " + _fmt(gs.get("expected_rows", 0))
+        + " expected 10-min records were missing and have been <b>gap-filled by time "
+          "interpolation</b> (wind speed, direction, temperature; power is not fabricated) - "
+          "fill rate " + _pct(gs.get("fill_pct", 0.0), 1)
+        + ". The wind-resource distribution and Weibull use the gap-filled series so they "
+          "represent the full period; energy accounting uses actual records only. Gap-filled "
+          "rows are flagged in the exported CSV (gap_filled=1).</div>")
 
     q = r["qc"]["flag_counts"]
     n_bad = int(q.loc[q["flag"].isin([6, 7]), "count"].sum())
@@ -447,35 +451,6 @@ multi-year / multi-hundred-turbine exports are handled within bounded memory.</d
                                   "measured_mwh": lambda v: _fmt(v, 0),
                                   "hours": lambda v: _fmt(v, 0)},
             caption="Yearly production summary (gross = warranted-curve energy at measured wind)"))
-
-    # ---- 2.2 gap filling (traceable) ----
-    gf = r.get("gap_fill") or {}
-    parts.append("<h3>2.2&nbsp;&nbsp;Data gap filling</h3>")
-    if gf and gf.get("summary") is not None and len(gf["summary"]):
-        gfs = gf["summary"]
-        parts.append(
-            "<p class=\"lead\">Missing wind-speed / power records were imputed per turbine "
-            "with the following traceable rules, so every filled value can be audited:</p>"
-            "<ul class=\"det\">"
-            "<li><b>Short gaps (max 1 h):</b> linear interpolation of wind speed between the "
-            "bounding valid records; power from the warranted curve at the interpolated wind speed.</li>"
-            "<li><b>Medium gaps (more than 1 h up to 4 h):</b> wind speed imputed from the "
-            "farm-average wind speed at the same timestamps, scaled by the turbine's own median "
-            "ratio; power from the warranted curve.</li>"
-            "<li><b>Longer gaps (more than 4 h):</b> not filled (would be speculation) — "
-            "accounted via data coverage and availability metrics instead.</li>"
-            "</ul>"
-            f"<p class=\"lead\"><b>{gf.get('n_filled', 0):,} records filled in total.</b> "
-            "The column <code>fill_method</code> in the exported gap-filled CSV identifies each "
-            "imputed value (<code>linear_interp</code> / <code>neighbour_impute</code> / "
-            "<code>curve_estimate</code>).</p>")
-        parts.append(html_table(
-            gfs,
-            formats={"ws_linear_filled": lambda v: _fmt(v, 0),
-                     "ws_neighbour_filled": lambda v: _fmt(v, 0),
-                     "power_curve_filled": lambda v: _fmt(v, 0),
-                     "total_filled": lambda v: _fmt(v, 0)},
-            caption="Gap-filling summary per turbine"))
 
     # ---------------- availability ----------------
     parts.append("<h2>3&nbsp;&nbsp;Availability &amp; lost-energy accounting</h2>")
@@ -529,6 +504,21 @@ every downtime record (air-density adjusted). Curtailment is excluded from the d
 IEC 61400-26-1 production-based availability. <b>In this run:</b> A<sub>T</sub> = {_pct(avail['time_avail_pct'],2)},
 A<sub>E</sub> = {_pct(avail['prod_avail_pct'],2)}. Full derivation in Appendix A.</li>
 </ul></div>""")
+    if "per_turbine_losses" in r and len(r["per_turbine_losses"]):
+        plm = r["per_turbine_losses"]
+        fmts = {}
+        for c in plm.columns:
+            if c == "turbine":
+                continue
+            if c.endswith("_mwh") or c in ("energy_mwh", "gross_mwh"):
+                fmts[c] = lambda v: _fmt(v, 0)
+            elif c.endswith("_pct"):
+                fmts[c] = lambda v: _pct(v, 2)
+        parts.append(html_table(
+            plm.round(2), formats=fmts,
+            caption="Per-WTG loss categorisation (MWh and % of WTG gross energy) - "
+                    "downtime, curtailment, derating, environmental and wake losses "
+                    "quantified for every turbine"))
     parts.append(html_table(
         r["availability"]["monthly"], formats={"energy_mwh": lambda v: _fmt(v,1),
                                    "downtime_h": lambda v: _fmt(v,0),
@@ -605,9 +595,41 @@ warranted curve is computed over the measured operating wind distribution.</p>
     'Monthly performance unavailable')}</div>
 </div>""")
 
+    # ---------------- yaw misalignment ----------------
+    yaw = r.get("yaw")
+    parts.append("<h2>5&nbsp;&nbsp;Yaw misalignment screening</h2>")
+    if yaw is None:
+        parts.append(
+            "<div class='note'><b>Yaw analysis not performed:</b> requires both wind "
+            "direction (e.g. <code>Amb_WindDir_Abs_Avg</code>) and nacelle direction columns "
+            "in the SCADA. The yaw error per record is wind_dir - nacelle_dir; the offset "
+            "that maximises power is found by a quadratic fit of power ratio vs yaw error "
+            "per turbine.</div>")
+    else:
+        parts.append(
+            "<p class='lead'>For each WTG, operating records are used to fit power ratio "
+            "(measured/warranted at the same wind speed) against the yaw error "
+            "(yaw error = wind direction - nacelle direction). The vertex of the quadratic "
+            "gives the yaw offset that maximises power, i.e. the estimated yaw misalignment.</p>")
+        parts.append(_chart(lambda: pl.fig_to_b64(pl.yaw_plot(yaw)), 'Yaw error',
+                            'Yaw chart unavailable'))
+        parts.append(html_table(
+            yaw["per_turbine"].round(2),
+            formats={"yaw_misalignment_deg": lambda v: f"{v:+.1f}",
+                     "r2": lambda v: f"{v:.2f}", "n": lambda v: _fmt(v, 0),
+                     "loss_pct": lambda v: _pct(v, 2),
+                     "mean_power_ratio": lambda v: f"{v:.3f}"},
+            caption="Estimated yaw misalignment per WTG (positive = nacelle clockwise of "
+                    "wind; |offset| > 5 deg typically warrants correction; loss = "
+                    "energy-weighted gain if corrected)"))
+        if len(yaw.get("flagged", [])):
+            parts.append("<div class='note' style='border-left-color:#C0504D'>"
+                         "<b>" + str(len(yaw["flagged"])) + " turbine(s) with |yaw error| > 5 deg "
+                         "flagged for inspection.</b></div>")
+
     # ---------------- wake ----------------
     wk = r["wake"]
-    parts.append("<h2>5&nbsp;&nbsp;Wake analysis</h2>")
+    parts.append("<h2>6&nbsp;&nbsp;Wake analysis</h2>")
     parts.append(f"""<p class="lead">The free-stream wind speed per interval is estimated with the reference-turbine
 method (mean of the least-waked turbines per direction sector; anemometer-faulted turbines excluded). The wake deficit
 per turbine per sector is 1 − ws<sub>i</sub>/ws<sub>free</sub>; the wake energy loss is the difference
@@ -631,40 +653,9 @@ would refine this value.</div>""")
              "wake_energy_mwh": lambda v: _fmt(v,1)},
     caption="Per-turbine mean wake deficit")}</div></div>""")
 
-    # ---------------- yaw error analysis (5.1) ----------------
-    yw = r.get("yaw") or {}
-    parts.append("<h3>5.1&nbsp;&nbsp;Yaw error analysis (wind direction vs nacelle)</h3>")
-    if yw and yw.get("per_turbine") is not None and len(yw["per_turbine"]):
-        parts.append(
-            "<p class=\"lead\">The yaw error per turbine is the power-weighted circular mean "
-            "of (wind direction - nacelle direction) over operating records at wind speeds "
-            f"&ge; {yw.get('min_ws', 6.0)} m/s. A positive value means the nacelle lags the wind; "
-            "a systematic non-zero yaw error reduces energy capture (cosine loss ~ 1 - cos(yaw)) "
-            "and is a candidate for yaw optimisation.</p>")
-        parts.append(
-            "<div class=\"grid2\">"
-            f"<div>{_chart(lambda: pl.fig_to_b64(pl.yaw_histogram(yw.get('histogram'))), 'Yaw histogram', 'Yaw histogram unavailable')}</div>"
-            "<div>" + html_table(
-                yw["per_turbine"],
-                formats={"yaw_error_deg": lambda v: f"{v:+.2f}&deg;",
-                         "circular_std_deg": lambda v: f"{v:.2f}&deg;",
-                         "n_records": lambda v: _fmt(v, 0),
-                         "mean_ws": lambda v: f"{v:.2f}"},
-                caption="Per-turbine yaw error (power-weighted circular mean)") + "</div>"
-            "</div>")
-        worst = yw["per_turbine"].reindex(
-            yw["per_turbine"]["yaw_error_deg"].abs().sort_values(ascending=False).index).head(3)
-        if len(worst) and worst["yaw_error_deg"].abs().max() > 3.0:
-            parts.append(
-                "<div class=\"note\"><b>Yaw finding:</b> turbines "
-                + ", ".join(str(t) for t in worst["turbine"].tolist())
-                + " show yaw errors of "
-                + ", ".join(f"{v:+.1f}&deg;" for v in worst["yaw_error_deg"].tolist())
-                + " - candidate yaw alignment / LiDAR campaigns.</div>")
-
     # ---------------- long-term climate ----------------
     cl = r["climate"]
-    parts.append("<h2>6&nbsp;&nbsp;Long-term wind climate &amp; MCP</h2>")
+    parts.append("<h2>7&nbsp;&nbsp;Long-term wind climate &amp; MCP</h2>")
     parts.append(f"""<p class="lead">The short measurement record is correlated with a long-term reference
 ({cl['method']}, {cl['lt_n_years']:.1f} years) using sector-wise linear regression (Measure-Correlate-Predict),
 and a long-term Weibull wind distribution is fitted to the predicted long-term daily wind speeds.</p>""")
@@ -748,7 +739,7 @@ R² = {m['fit']['r2']:.2f} (n = {m['fit']['n']} months) → LT annual gross
 <b>used for the loss tree: {used}</b>.</div>""")
 
     # ---------------- loss tree ----------------
-    parts.append("<h2>7&nbsp;&nbsp;Loss tree &amp; net energy yield</h2>")
+    parts.append("<h2>8&nbsp;&nbsp;Loss tree &amp; net energy yield</h2>")
     parts.append(f"""<p class="lead">Gross AEP (long-term) = {_fmt(gross_lt)} MWh/yr is obtained by the
 <b>{r['losses']['lt_method_used']}</b> method (see §6.1 for the production-regression method and its
 cross-check against the Weibull × warranted-curve method). Losses measured over the SCADA period
@@ -780,70 +771,53 @@ components; P50/P75/P90/P99 are quantiles of the resulting net-AEP distribution.
 Full derivation in Appendix B.</div>""")
     parts.append(_chart(lambda: pl.fig_to_b64(pl.loss_waterfall(
         tree.to_dict("records"), gross_lt, net)), "Loss tree", "Loss tree chart unavailable"))
-    parts.append(
-        "<h3>7.1&nbsp;&nbsp;Loss calculation details</h3>"
-        "<p class=\"lead\">Every loss category in the waterfall above is quantified as follows "
-        "(all values are air-density corrected; energy = power x interval):</p>"
-        "<ul class=\"det\">"
-        "<li><b>Availability (downtime):</b> E_down = sum of warranted-curve power at the measured "
-        "wind speed over all records classified as fault / maintenance / grid outage. "
-        "A_E = E_act / (E_act + E_down).</li>"
-        "<li><b>Curtailment:</b> E_curt = sum of (P_warr(v) - P_act) over curtailment-flagged "
-        "records, or records producing below 30% of expected at usable wind speeds.</li>"
-        "<li><b>Derating / partial load:</b> E_der = sum of (P_warr(v) - P_act) over records "
-        "producing at 30-85% of expected at usable wind speeds (derate states).</li>"
-        "<li><b>Environmental:</b> E_env = sum of (P_warr(v) - P_act) over records flagged "
-        "icing / high-temperature derate.</li>"
-        "<li><b>Wake:</b> E_wake = sum of [P_warr(v_free) - P_warr(v_i)] x dt over operating "
-        "records, where v_free is the reference-turbine free-stream wind speed and v_i the "
-        "turbine's nacelle wind speed (deficits aggregated per 30&deg; sector).</li>"
-        "<li><b>Turbine performance:</b> operating shortfall of actual vs warranted-curve energy "
-        "at the turbine's own wind speed, minus the wake component (to avoid double counting). "
-        "A negative value means the fleet outperforms the warranted curve.</li>"
-        "<li><b>Electrical / Other:</b> input assumptions (transformer, collection, "
-        "transmission losses; miscellaneous), applied multiplicatively as configured.</li>"
-        "</ul>"
-        "<p class=\"lead\">All losses are expressed as % of gross energy over the measured "
-        "period and applied multiplicatively to the long-term gross AEP; the reconciliation "
-        "note in the executive summary quantifies the residual gap between modelled and "
-        "measured energy.</p>")
     parts.append(html_table(
         tree, formats={"energy_mwh": lambda v: (_fmt(v) if v is not None else "input"),
                        "pct_of_gross": lambda v: _pct(v, 2)},
         caption="Loss tree — losses as % of gross AEP"))
-
-    # ---- WTG-level loss stack ----
-    per = r["availability"]["per_turbine"]
-    gross_p = float(r["losses"]["recon"]["gross_period_mwh"]) or 1.0
-    wtg_rows = []
-    wk_map = {}
-    if len(r["wake"]["per_turbine"]):
-        wk_map = dict(zip(r["wake"]["per_turbine"]["turbine"],
-                          r["wake"]["per_turbine"]["wake_energy_mwh"]))
-    for _, row in per.iterrows():
-        tid = row["turbine"]
-        d = float(row.get("downtime_loss_mwh", 0))
-        c = float(row.get("curtailment_loss_mwh", 0))
-        de = float(row.get("derating_loss_mwh", 0))
-        e = float(row.get("environmental_loss_mwh", 0))
-        wk = float(wk_map.get(tid, 0.0))
-        wtg_rows.append({"turbine": tid,
-                         "downtime_pct": 100.0 * d / gross_p,
-                         "curtailment_pct": 100.0 * c / gross_p,
-                         "derating_pct": 100.0 * de / gross_p,
-                         "environmental_pct": 100.0 * e / gross_p,
-                         "wake_pct": 100.0 * wk / gross_p,
-                         "total_loss_pct": 100.0 * (d + c + de + e + wk) / gross_p})
-    wtg = pd.DataFrame(wtg_rows)
-    wtg_fmt = {k: (lambda v: _pct(v, 2)) for k in wtg.columns if k != "turbine"}
+    # detailed loss calculations (DNV-style: formula + measured values)
+    E = r["energy"]
+    parts.append("<h3>How each loss is calculated</h3>")
+    parts.append('<ul class="det">')
+    parts.append("<li><b>Availability (downtime):</b> E_down = sum over downtime records of "
+                 "P_warr(v,rho) x dt. Time-based A_T = (T_cal - T_down)/T_cal; energy-based "
+                 "A_E = E_act/(E_act + E_down).</li>")
+    parts.append("<li><b>Curtailment:</b> E_curt = sum over curtailment records of "
+                 "P_warr(v,rho) x dt (records flagged by SCADA derate status or the "
+                 "low-output-at-usable-wind detector).</li>")
+    parts.append("<li><b>Derating / partial load:</b> E_der = sum over derated records of "
+                 "P_warr(v,rho) x dt (power ratio 30-85% of warranted while operating).</li>")
+    parts.append("<li><b>Environmental:</b> E_env = sum over icing/high-temperature derate "
+                 "records of P_warr(v,rho) x dt.</li>")
+    parts.append("<li><b>Wake:</b> E_wake = sum over operating records of "
+                 "[P_warr(v_free) - P_warr(v_i)] x dt, where v_free is the sector "
+                 "reference-turbine free-stream wind speed; density corrected.</li>")
+    parts.append("<li><b>Turbine performance:</b> operating shortfall vs warranted curve, "
+                 "wake component removed: E_perf = sum(P_warr(v_i) - P_act) - E_wake "
+                 "(negative = overperformance).</li>")
+    parts.append("<li><b>Electrical / Other:</b> input percentages from the config, "
+                 "applied multiplicatively.</li>")
+    parts.append("</ul>")
     parts.append(html_table(
-        wtg.round(3), formats=wtg_fmt,
-        caption="WTG-level loss categorisation (% of period gross energy) - "
-                "availability, curtailment, derating, environmental and wake "
-                "losses per turbine"))
+        pd.DataFrame([
+            {"loss": "Availability (downtime)", "formula": "sum P_warr(v)*dt over downtime",
+             "value_mwh": E["E_lost_mwh"].get(2, 0.0)},
+            {"loss": "Curtailment", "formula": "sum P_warr(v)*dt over curtailment",
+             "value_mwh": E["E_lost_mwh"].get(3, 0.0)},
+            {"loss": "Derating", "formula": "sum P_warr(v)*dt over derated records",
+             "value_mwh": E["E_lost_mwh"].get(4, 0.0)},
+            {"loss": "Environmental", "formula": "sum P_warr(v)*dt over env. derates",
+             "value_mwh": E["E_lost_mwh"].get(5, 0.0)},
+            {"loss": "Wake", "formula": "sum [P_warr(v_free)-P_warr(v_i)]*dt",
+             "value_mwh": wk["wake_energy_mwh"]},
+            {"loss": "Turbine performance", "formula": "sum(P_warr-P_act) - wake",
+             "value_mwh": r["power_curve"]["perf_energy_mwh"]},
+        ]),
+        formats={"value_mwh": lambda v: _fmt(v, 0)},
+        caption="Loss calculation summary - measured values over the SCADA period"))
 
     # ---------------- uncertainty ----------------
-    parts.append("<h2>8&nbsp;&nbsp;Uncertainty &amp; P-values</h2>")
+    parts.append("<h2>9&nbsp;&nbsp;Uncertainty &amp; P-values</h2>")
     parts.append(f"""<p class="lead">A Monte Carlo simulation ({cfg['mc_iterations']:,} draws) combines the
 1σ uncertainty of each component (lognormal multipliers) to produce the distribution of net annual
 energy production. P-values are quantiles of that distribution.</p>""")
@@ -851,30 +825,14 @@ energy production. P-values are quantiles of that distribution.</p>""")
 <div>{_chart(lambda: pl.fig_to_b64(pl.mc_histogram(unc['samples'], p)), 'MC histogram', 'Histogram unavailable')}</div>
 <div>{_chart(lambda: pl.fig_to_b64(pl.tornado(unc['components'])), 'Tornado', 'Tornado chart unavailable')}</div></div>""")
     pv = pd.DataFrame([
-        {"P-value": "P50 (median)", "Net AEP (MWh/yr)": p["P50"], "of deterministic": f"{100*p['P50']/net:.1f}%"},
-        {"P-value": "P75", "Net AEP (MWh/yr)": p["P75"], "of deterministic": f"{100*p['P75']/net:.1f}%"},
-        {"P-value": "P90", "Net AEP (MWh/yr)": p["P90"], "of deterministic": f"{100*p['P90']/net:.1f}%"},
-        {"P-value": "P99", "Net AEP (MWh/yr)": p["P99"], "of deterministic": f"{100*p['P99']/net:.1f}%"},
+        {"P-value": "P50 (median)", "Exceedance prob.": "50%", "Net AEP (MWh/yr)": _fmt(p["P50"]), "of deterministic": f"{100*p['P50']/net:.1f}%"},
+        {"P-value": "P75", "Exceedance prob.": "75%", "Net AEP (MWh/yr)": _fmt(p["P75"]), "of deterministic": f"{100*p['P75']/net:.1f}%"},
+        {"P-value": "P90", "Exceedance prob.": "90%", "Net AEP (MWh/yr)": _fmt(p["P90"]), "of deterministic": f"{100*p['P90']/net:.1f}%"},
+        {"P-value": "P99", "Exceedance prob.": "99%", "Net AEP (MWh/yr)": _fmt(p["P99"]), "of deterministic": f"{100*p['P99']/net:.1f}%"},
     ])
-    parts.append(html_table(
-        pv,
-        formats={"Net AEP (MWh/yr)": lambda v: f"{v:,.0f}",
-                 "of deterministic": lambda v: f"{v:.1f}%"},
-        caption="P-values of net annual energy yield"))
-    mc_mean = float(np.mean(unc["samples"]))
-    mc_median = float(np.median(unc["samples"]))
-    mc_sd = float(unc["sd"])
-    audit_note = (
-        f"<div class='note'><b>Monte Carlo audit:</b> {cfg['mc_iterations']:,} draws, "
-        f"lognormal multipliers. Sample mean = {_fmt(mc_mean)} MWh/yr, sample median = "
-        f"{_fmt(mc_median)} MWh/yr, deterministic net = {_fmt(net)} MWh/yr, "
-        f"1σ = {_fmt(mc_sd)} MWh/yr ({100.0*mc_sd/net:.1f}%). A lognormal distribution has "
-        f"median = deterministic value; the difference ({100.0*(mc_median-net)/net:+.2f}%) "
-        f"is sampling noise. Combined 1σ = "
-        f"{_pct(float(np.sqrt((unc['components']['sigma_pct']**2).sum())))}.</div>"
-    )
-    parts.append(audit_note)
-
+    parts.append(html_table(pv, caption="P-values of net annual energy yield - DNV convention: "
+                                        "Px is the yield with x% probability of exceeding "
+                                        "(P90 < P75 < P50)"))
     parts.append(html_table(
         unc["components"],
         formats={"sigma_pct": lambda v: _pct(v, 2), "contribution_pct": lambda v: _pct(v, 1)},
@@ -882,7 +840,7 @@ energy production. P-values are quantiles of that distribution.</p>""")
 
     # ---------------- DNV-style: sensitivity & conclusions ----------------
     sens = _sensitivity_table(r)
-    parts.append("<h2>9&nbsp;&nbsp;Sensitivity analysis</h2>")
+    parts.append("<h2>10&nbsp;&nbsp;Sensitivity analysis</h2>")
     parts.append("""<p class="lead">Sensitivity of the net P50 yield to the key parameters,
 computed by perturbing each parameter while holding the others at their base values.</p>""")
     parts.append(html_table(sens, formats={"delta_p50_mwh": lambda v: f"{v:+,.0f}",
@@ -982,31 +940,7 @@ mapping, losses and uncertainty overrides.</li>
 <code>per_turbine_metrics.csv</code>.</li>
 </ul>""")
 
-    parts.append("""<h2>Appendix D — Data processing, traceability &amp; DNV/DAKKS alignment</h2>
-<ul class="det">
-<li><b>Input traceability:</b> every report records the SCADA file, OEM profile detected,
-recording interval, record period, coverage, and the read method (streamed / blockwise). The
-flagged 10-min dataset (<code>flagged_scada_10min.csv</code>) carries per-record operating-state
-flags and reasons; the gap-filled export adds <code>fill_method</code> for every imputed value
-(§2.2).</li>
-<li><b>QC decisions:</b> spikes, out-of-range values, frozen anemometers, text-in-numeric channels
-are coerced/flagged with documented rules; excluded records are reported in the QC table and never
-silently dropped from loss accounting.</li>
-<li><b>DNV-style PCEYA alignment:</b> IEC 61400-12-1 binning (0.5 m/s, min-count, density
-correction); IEC 61400-26 availability categories; MCP long-term correction (sector-wise linear
-regression) against ERA5T/NASA POWER or a user reference; loss tree applied multiplicatively;
-Monte Carlo P-values with lognormal components; sensitivity analysis; reconciliation of modelled
-vs metered energy.</li>
-<li><b>DAKKS-readiness notes:</b> for accreditation-style audits, keep (1) the original SCADA
-files, (2) the config JSON used, (3) the warranted power curve source, (4) the long-term reference
-provenance (ERA5T version/period or met-mast), and (5) this report's parameter values — the
-pipeline is deterministic given (1)-(4), so results can be independently reproduced.</li>
-<li><b>Known limitations (documented):</b> nacelle anemometry instead of a met mast for wind
-speed; heuristics where status codes are absent; wake estimate uses the reference-turbine method;
-losses assumed stationary into the long term.</li>
-</ul>
-
-<h2>Appendix E — Methodology, assumptions &amp; limitations</h2>
+    parts.append("""<h2>Appendix D — Methodology, assumptions &amp; limitations</h2>
 <ul class="lead" style="padding-left:18px">
 <li><b>Data preparation:</b> SCADA resampled to 10-min averages; records classified per IEC 61400-26-style
 operating states (operating / below cut-in / downtime / curtailment / derating / environmental / bad data /
@@ -1027,6 +961,47 @@ where status codes are absent; losses measured over the SCADA period are assumed
 long term; results should be refined with met-mast/lidar data, site layout and OEM curves for
 certification-grade work.</li>
 </ul>""")
+
+    # traceability appendix (DNV/DAKKS-style audit trail)
+    tr = r.get("traceability") or {}
+    if tr:
+        parts.append("<h2>Appendix E - Traceability & audit trail (DNV / DAKKS readiness)</h2>")
+        parts.append("<p class='lead'>This appendix documents every input, processing step and "
+                     "reference used, so the assessment is reproducible and auditable.</p>")
+        rows = [("Tool version", tr.get("tool_version")),
+                ("Generated", tr.get("generated_at")),
+                ("Farm", tr.get("farm")),
+                ("Record period", " -> ".join(tr.get("record_period") or [])),
+                ("Turbines", tr.get("turbines")),
+                ("Records analysed", tr.get("rows")),
+                ("Data capture rate", f"{tr.get('coverage_pct')}%")]
+        gs = tr.get("gap_filling") or {}
+        if gs:
+            rows += [("Gap-filled records", gs.get("filled_rows")),
+                     ("Gap-fill rate", f"{gs.get('fill_pct', 0):.1f}% of expected")]
+        parts.append(html_table(pd.DataFrame(rows, columns=["Item", "Value"]),
+                                caption="Assessment metadata"))
+        parts.append(html_table(
+            pd.DataFrame([{"standard": s} for s in tr.get("standards", [])]),
+            caption="Standards & references applied"))
+        parts.append(html_table(
+            pd.DataFrame([{"stage": k, "method": v} for k, v in tr.get("methods", {}).items()]),
+            caption="Method per processing stage"))
+        import json as _json
+        cfgj = _json.dumps({k: v for k, v in (tr.get("config_used") or {}).items()
+                            if k in ("farm_name", "latitude", "longitude", "hub_height_m",
+                                     "rated_power_kw", "cut_in_mps", "cut_out_mps",
+                                     "air_density_correction", "air_pressure_kpa",
+                                     "electrical_loss_pct", "other_loss_pct",
+                                     "preconstruction_p50_gwh", "lt_primary_method",
+                                     "long_term_source", "status_codes",
+                                     "uncertainty_overrides_pct")}, indent=1)
+        parts.append("<div class='formula'>" + cfgj.replace("&", "&amp;")
+                     .replace("<", "&lt;") + "</div>")
+        parts.append("<p class='lead'>Raw data, flags and gap-fill marks are exported in "
+                     "<code>flagged_scada_10min.csv</code> (gap_filled=1 marks interpolated "
+                     "records) - the full audit trail is reproducible from that file plus this "
+                     "configuration.</p>")
 
     parts.append(f"""<div class="foot">Generated by WindPCEA — post-construction energy yield assessment.
 This tool implements standard industry practice (IEC 61400-12-1, IEC 61400-26, MCP, Monte Carlo P-values)
@@ -1114,7 +1089,9 @@ def export_csvs(r, outdir):
     df = r["df"][["timestamp", "turbine", "power_kw", "ws", "energy_kwh",
                   "expected_energy_kwh", "flag", "flag_reason"]
                  + (["dir_deg"] if "dir_deg" in r["df"] else [])
-                 + (["temp_c"] if "temp_c" in r["df"] else [])]
+                 + (["wind_dir_deg"] if "wind_dir_deg" in r["df"] else [])
+                 + (["temp_c"] if "temp_c" in r["df"] else [])
+                 + (["gap_filled"] if "gap_filled" in r["df"] else [])]
     p1 = os.path.join(outdir, "flagged_scada_10min.csv")
     df.to_csv(p1, index=False)
     out.append(p1)
@@ -1124,14 +1101,6 @@ def export_csvs(r, outdir):
     p3 = os.path.join(outdir, "per_turbine_metrics.csv")
     r["power_curve"]["per_turbine"].to_csv(p3, index=False)
     out.append(p3)
-    gf = r.get("gap_fill") or {}
-    if gf and gf.get("df") is not None and len(gf["df"]):
-        p4 = os.path.join(outdir, "gap_filled_scada_10min.csv")
-        keep = [c for c in ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
-                            "temp_c", "status", "curt_flag", "flag", "flag_reason",
-                            "filled", "fill_method"] if c in gf["df"].columns]
-        gf["df"][keep].to_csv(p4, index=False)
-        out.append(p4)
     return out
 
 

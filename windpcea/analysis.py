@@ -28,7 +28,6 @@ from . import oem as oem_mod
 from . import powercurve as pc_mod
 from . import qc as qc_mod
 from . import scada as scada_mod
-from . import gapfill as gapfill_mod
 from . import uncertainty as unc_mod
 from . import yaw as yaw_mod
 from . import wake as wake_mod
@@ -104,6 +103,7 @@ def run_analysis(cfg, scada_path, outdir=None):
     if density is not None:
         df["expected_power_kw"] = (df["expected_power_kw"] * np.clip(density, 0.5, 1.15))
         df["expected_energy_kwh"] = df["expected_power_kw"] * df["dt_h"]
+    df = _gap_fill(df, cfg)   # DNV-style completeness: interpolate short gaps
 
     # impute expected power for anemometer-fault rows from the farm average
     # (the turbine kept producing; only its anemometer was frozen)
@@ -165,12 +165,6 @@ def run_analysis(cfg, scada_path, outdir=None):
     gross_y = df.groupby(df["timestamp"].dt.year)["expected_energy_kwh"].agg(
         lambda s: s.sum() / 1000.0).rename("gross_mwh")
     yearly = yearly.join(gross_y).reset_index().rename(columns={"timestamp": "year"})
-
-    # ---------------- gap filling (traceable) ----------------
-    df_gap, gap_summary = gapfill_mod.gap_fill(df, cfg, interp_power)
-    n_filled = int(gap_summary["total_filled"].sum()) if len(gap_summary) else 0
-    # yaw error analysis (uses raw, unfilled data for integrity)
-    yaw_res = yaw_mod.yaw_error_analysis(df)
 
     # ---------------- wake analysis ----------------
     # only exclude turbines with a significant share of anemometer-fault rows
@@ -312,11 +306,16 @@ def run_analysis(cfg, scada_path, outdir=None):
         "full_load_hours": net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb),
         "v_arr": v_arr, "p_arr": p_arr,
         "wind_stats": wind_stats,
-        "gap_fill": {"df": df_gap, "summary": gap_summary, "n_filled": n_filled},
-        "yaw": yaw_res,
         "monthly_downtime": monthly_downtime,
         "monthly_perf": monthly_perf,
         "yearly": yearly,
+        "yaw": yaw_mod.analyse_yaw(df, cfg, v_arr, p_arr, interp_power),
+        "per_turbine_losses": per_turbine_loss_matrix(df, wake, energy),
+        "gap_stats": df.attrs.get("gap_stats", {"filled_rows": 0, "expected_rows": 0,
+                                                "fill_pct": 0.0}),
+        "traceability": build_traceability(cfg, meta, qc,
+                                           df.attrs.get("gap_stats", {}),
+                                           df.attrs.get("read_info", {})),
     }
     return results
 
@@ -328,38 +327,37 @@ def run_files(config_path, scada_path, outdir=None):
 
 def _wind_stats_from_df(df):
     """Wind-resource statistics for the report: rose histogram, monthly and
-    diurnal mean wind speed, wind-speed distribution (FULL range 0-40 m/s,
-    including below cut-in — uses all valid records, not just operating),
-    P-P sample (operating rows only)."""
-    valid = df[df["flag"].isin((0, 1))]          # operating + below cut-in
-    if len(valid) == 0:
-        valid = df[df["flag"].notna()]
-    ws = valid["ws"].dropna()
+    diurnal mean wind speed, wind-speed distribution, P-P sample.
+
+    Uses ALL valid wind speeds (excluding bad data / anemometer faults),
+    INCLUDING below cut-in records, so the distribution and Weibull cover the
+    full wind-speed range from 0 m/s (DNV practice). Gap-filled rows are
+    included so the distribution represents the complete period.
+    """
+    op = df[(df["flag"].isin((0, 1))) | (df["gap_filled"] == 1)]  # operating + below cut-in + gap-filled
+    op = op[op["ws"].notna()]
+    ws = op["ws"]
     stats = {"rose": {}, "monthly_ws": pd.DataFrame(), "diurnal_ws": pd.DataFrame(),
              "ws_hist": pd.DataFrame(), "pp_sample": pd.DataFrame()}
-    if len(valid) == 0:
+    if len(op) == 0:
         return stats
-    if "dir_deg" in valid.columns:
-        m = valid["dir_deg"].notna() & valid["ws"].notna()
-        d5 = (valid.loc[m, "dir_deg"] // 5 * 5).astype(int).values
-        w1 = valid.loc[m, "ws"].astype(int).values
+    if "dir_deg" in op.columns:
+        m = op["dir_deg"].notna() & op["ws"].notna()
+        d5 = (op.loc[m, "dir_deg"] // 5 * 5).astype(int).values
+        w1 = op.loc[m, "ws"].astype(int).values
         comb = d5 * 1000 + w1
         for k, c in zip(*np.unique(comb, return_counts=True)):
             stats["rose"][(int(k // 1000), int(k % 1000))] = int(c)
-    mm = valid.groupby(valid["timestamp"].dt.to_period("M"))["ws"].mean()
+    mm = op.groupby(op["timestamp"].dt.to_period("M"))["ws"].mean()
     stats["monthly_ws"] = pd.DataFrame({"month": mm.index.astype(str),
                                         "ws_mps": mm.values})
-    hh = valid.groupby(valid["timestamp"].dt.hour)["ws"].mean()
+    hh = op.groupby(op["timestamp"].dt.hour)["ws"].mean()
     stats["diurnal_ws"] = pd.DataFrame({"hour": hh.index, "ws_mps": hh.values})
-    # FULL wind-speed range, including the 0-3 m/s bins (below cut-in)
     hist, edges = np.histogram(ws.values, bins=np.arange(0, 42, 1.0))
     stats["ws_hist"] = pd.DataFrame({"bin_center": edges[:-1] + 0.5, "count": hist})
-    # P-P sample: operating rows only
-    op = df[df["flag"] == 0]
     n = len(op)
-    if n:
-        take = op.sample(min(30000, n), random_state=1)
-        stats["pp_sample"] = take[["ws", "power_kw", "expected_power_kw"]].reset_index(drop=True)
+    take = op.sample(min(30000, n), random_state=1)
+    stats["pp_sample"] = take[["ws", "power_kw", "expected_power_kw"]].reset_index(drop=True)
     return stats
 
 
@@ -413,3 +411,127 @@ def _qc_warnings(df, flag_counts):
                 f"{100*down/total:.1f}% of records are downtime — the status-code mapping "
                 "may be inverted or wrong for this file. Check 'status_codes'.")
     return warnings
+
+
+# ---------------------------------------------------------------------------
+# gap filling (DNV-style data completeness)
+# ---------------------------------------------------------------------------
+def _gap_fill(df, cfg, max_gap_h=6.0):
+    """Reindex each turbine to the complete 10-min grid over the record
+    period and interpolate wind speed / direction / temperature across gaps
+    up to `max_gap_h`. Power is NOT interpolated (energy must come from real
+    records). Filled rows are marked gap_filled=1, flag=8 with reason
+    'Gap filled (interpolated)', and zero derived energy - so they never
+    affect energy accounting or losses, but their wind speed feeds the
+    wind-resource distribution and Weibull (full-period representativeness).
+    """
+    if df.empty:
+        df["gap_filled"] = 0
+        return df
+    dt = pd.Timedelta(minutes=int(round(df["dt_h"].iloc[0] * 60)) or 10)
+    df = df.copy()
+    df["gap_filled"] = 0
+    max_rows = max(1, int(round(max_gap_h * 60 / max(1, dt.total_seconds() / 60))))
+    parts = []
+    filled_rows = 0
+    total_expected = 0
+    for tid, g in df.groupby("turbine"):
+        if len(g) < 10:
+            parts.append(g)
+            continue
+        full = pd.date_range(g["timestamp"].min(), g["timestamp"].max(), freq=dt)
+        total_expected += len(full)
+        g = g.set_index("timestamp").reindex(full)
+        filled_mask = g["ws"].isna()
+        n_filled = int(filled_mask.sum())
+        for col in ("ws", "temp_c"):
+            if col in g.columns:
+                g[col] = g[col].interpolate(method="linear", limit=max_rows)
+        for col in ("dir_deg", "wind_dir_deg"):
+            if col in g.columns:
+                rad = np.deg2rad(g[col].values)
+                xs = pd.Series(np.cos(rad)).interpolate(limit=max_rows).values
+                ys = pd.Series(np.sin(rad)).interpolate(limit=max_rows).values
+                f = filled_mask.values
+                g.loc[f, col] = np.rad2deg(np.arctan2(ys[f], xs[f])) % 360.0
+        if "power_kw" in g.columns:
+            g.loc[filled_mask, "power_kw"] = np.nan
+        if "density_ratio" in g.columns:
+            g.loc[filled_mask, "density_ratio"] = np.nan
+        g["flag"] = g["flag"].fillna(8).astype(int)
+        if "flag_reason" in g.columns:
+            g["flag_reason"] = g["flag_reason"].fillna("Gap filled (interpolated)")
+        g.loc[filled_mask, "flag"] = 8
+        if "flag_reason" in g.columns:
+            g.loc[filled_mask, "flag_reason"] = "Gap filled (interpolated)"
+        for c in ("energy_kwh", "expected_energy_kwh", "expected_power_kw"):
+            if c in g.columns:
+                g.loc[filled_mask, c] = 0.0
+        g["turbine"] = tid
+        g["gap_filled"] = filled_mask.astype(int)
+        g["dt_h"] = df["dt_h"].iloc[0]
+        parts.append(g.reset_index().rename(columns={"index": "timestamp"}))
+        filled_rows += n_filled
+    df = pd.concat(parts, ignore_index=True).sort_values(
+        ["turbine", "timestamp"]).reset_index(drop=True)
+    df.attrs["gap_stats"] = {"filled_rows": int(filled_rows),
+                             "expected_rows": int(total_expected),
+                             "fill_pct": 100.0 * filled_rows / max(1, total_expected)}
+    return df
+
+
+def per_turbine_loss_matrix(df, wake, energy):
+    """Per-WTG loss matrix (MWh and % of WTG gross) for every loss category."""
+    gross_by = df.groupby("turbine")["expected_energy_kwh"].sum() / 1000.0
+    rows = []
+    for tid, g in df.groupby("turbine"):
+        gross = float(gross_by.get(tid, 0.0)) or 1e-9
+        row = {"turbine": tid}
+        for fl, name in [(2, "downtime"), (3, "curtailment"), (4, "derating"),
+                         (5, "environmental")]:
+            e = float(g.loc[g["flag"] == fl, "expected_energy_kwh"].sum() / 1000.0)
+            row[name + "_mwh"] = e
+            row[name + "_pct"] = 100.0 * e / gross
+        wk = float(wake["per_turbine"].set_index("turbine").reindex([tid])
+                   ["wake_energy_mwh"].fillna(0.0).iloc[0]) if len(wake["per_turbine"]) else 0.0
+        row["wake_mwh"] = wk
+        row["wake_pct"] = 100.0 * wk / gross
+        e_act = float(g.loc[g["flag"].isin((0, 7)), "energy_kwh"].sum() / 1000.0)
+        row["energy_mwh"] = e_act
+        row["gross_mwh"] = gross
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def build_traceability(cfg, meta, qc, gap_stats, read_info):
+    """DNV/DAKKS-style audit trail: inputs, processing, versions, QA."""
+    from . import __version__
+    return {
+        "tool_version": __version__,
+        "generated_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+        "farm": meta["farm_name"],
+        "record_period": [meta["record_start"], meta["record_end"]],
+        "turbines": meta["num_turbines"],
+        "read_method": read_info,
+        "rows": qc["rows"],
+        "coverage_pct": round(qc["coverage_pct"], 2),
+        "gap_filling": gap_stats,
+        "config_used": {k: v for k, v in cfg.items()
+                        if k not in ("column_aliases",)},
+        "standards": [
+            "IEC 61400-12-1:2022 — power performance measurement, 0.5 m/s binning",
+            "IEC 61400-26-1:2019 — availability categories & energy-based definitions",
+            "DNV-RP-0126 — uncertainty & probability of exceedance (P-values)",
+            "ISO/IEC 17025 / DAKKS-style traceability of inputs, processing and outputs",
+        ],
+        "methods": {
+            "availability": "time-based A_T=(T_cal-T_down)/T_cal; energy-based "
+                            "A_E=E_act/(E_act+E_down) with E_down=sum P_warr(v)*dt",
+            "power_curve": "IEC 61400-12-1 binning, air-density corrected to 1.225 kg/m3",
+            "wake": "reference-turbine free-stream proxy, 30-deg sectors",
+            "lt_correction": "MCP sector-wise OLS vs ERA5T reanalysis (or user file)",
+            "losses": "multiplicative loss tree on gross AEP",
+            "uncertainty": "lognormal 1-sigma components, Monte Carlo, "
+                           "Px = exceedance probability (P90 < P75 < P50)",
+        },
+    }

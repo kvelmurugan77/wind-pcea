@@ -33,6 +33,8 @@ POWER_FALLBACK = ["active power", "active_power", "activepower", "gen power",
 WS_FALLBACK = ["wind speed", "wind_speed", "windspeed", "windspd", "wind",
                "ws", "vavg", "v_avg", "wsavg", "ws_avg",
                "amb_wind"]
+WIND_DIR_FALLBACK = ["ambient wind dir", "wind dir", "winddir", "amb_winddir",
+                     "wd abs", "wind direction abs"]
 
 
 def _to_numeric_with_euro(df_col):
@@ -270,7 +272,7 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
         pcol = _find_col(df, aliases["power"])
         for key, cands in [("power_kw", aliases["power"]), ("ws", aliases["ws"]),
                            ("dir_deg", aliases["dir"]),
-                           ("wind_dir_deg", aliases.get("winddir", [])),
+                           ("wind_dir_deg", aliases.get("wind_dir", ["wind dir", "winddir", "amb_winddir"])),
                            ("temp_c", aliases["temp"]),
                            ("status", aliases["status"])]:
             col = _find_col(df, cands)
@@ -290,11 +292,6 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
                     df[key] = vals
                 if col != key:
                     df = df.drop(columns=[col])
-        if "wind_dir_deg" in df.columns and "dir_deg" in df.columns:
-            # wind_dir_deg must be a DIFFERENT column than nacelle dir;
-            # otherwise drop it (only nacelle dir available)
-            if (df["wind_dir_deg"] == df["dir_deg"]).all():
-                df = df.drop(columns=["wind_dir_deg"])
         # explicit curtailment flag
         ccol = _find_col(df, ["curtail", "derat", "power limit", "limit"])
         if ccol is not None:
@@ -318,6 +315,12 @@ def standardize(df, profile_key="auto", column_overrides=None, column_map=None):
             df["power_kw"] = vals
             if pcol != "power_kw":
                 df = df.drop(columns=[pcol])
+    if "wind_dir_deg" not in df.columns:
+        wdcol = _fallback_find(df, WIND_DIR_FALLBACK)
+        if wdcol:
+            df["wind_dir_deg"] = pd.to_numeric(df[wdcol], errors="coerce") % 360.0
+            if wdcol != "wind_dir_deg":
+                df = df.drop(columns=[wdcol])
     if "ws" not in df.columns:
         wcol = _fallback_find(df, WS_FALLBACK)
         if wcol:
@@ -467,7 +470,7 @@ def _matches(nc, aliases):
 # canonical internal column names — always kept (files may already be in
 # the tool's own long format, e.g. re-using a previous export)
 CANONICAL_COLS = ["timestamp", "turbine", "power_kw", "ws", "dir_deg",
-                  "wind_dir_deg", "temp_c", "status", "curt_flag"]
+                  "temp_c", "status", "curt_flag"]
 
 
 def _needed_columns(columns, aliases):
@@ -477,7 +480,7 @@ def _needed_columns(columns, aliases):
     ts_aliases = ["timestamp", "datetime", "date time", "time stamp"] + aliases["timestamp"]
     signal = (aliases["power"] + aliases["ws"] + aliases["dir"] + aliases["temp"]
               + aliases["status"] + ["curtail", "derat", "power limit", "limit"]
-              + POWER_FALLBACK + WS_FALLBACK + CANONICAL_COLS)
+              + POWER_FALLBACK + WS_FALLBACK + WIND_DIR_FALLBACK + CANONICAL_COLS)
     for c in columns:
         nc = oem.normalize_col_name(c)
         if not nc:

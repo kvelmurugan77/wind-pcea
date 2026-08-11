@@ -346,7 +346,26 @@ def analyze():
             results = run_blockwise(cfg, scada_path, outdir=outdir)
         else:
             results = run_analysis(cfg, scada_path, outdir=outdir)
-        build_html(results, outdir)
+        report_path = build_html(results, outdir)
+        # inject a download toolbar (HTML report + Excel) into the report page
+        try:
+            with open(report_path, encoding="utf-8") as f:
+                html = f.read()
+            toolbar = (
+                '<div style="position:fixed;top:0;left:0;right:0;z-index:999;'
+                'background:#14365D;color:#fff;padding:8px 16px;font-size:13px;'
+                'display:flex;gap:12px;align-items:center;box-shadow:0 2px 8px rgba(0,0,0,.25)">'
+                '<b>WindPCEA report</b> '
+                f'<a href="/download/{run_id}/pceya_report.html" style="color:#fff">Download report (HTML)</a> '
+                f'<a href="/download/{run_id}/pceya_results.xlsx" style="color:#fff">Download Excel</a> '
+                f'<a href="/download/{run_id}/flagged_scada_10min.csv" style="color:#fff">Download flagged data (CSV)</a>'
+                '</div>')
+            if "<body>" in html:
+                html = html.replace("<body>", "<body>" + toolbar, 1)
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(html)
+        except Exception:
+            pass
         export_excel(results, outdir)
         export_csvs(results, outdir)
         with open(os.path.join(run_dir, "config_used.json"), "w") as f:

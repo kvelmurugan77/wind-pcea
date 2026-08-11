@@ -55,7 +55,9 @@ def uncertainty_analysis(cfg, climate, tree, net_mwh, mc_iterations=20000, seed=
         factors *= np.exp(rng.normal(0.0, v / 100.0, mc_iterations))
 
     samples = net_mwh * factors
-    p = {f"P{int(q)}": float(np.quantile(samples, q / 100.0))
+    # DNV / industry convention: Px = yield with x% probability of EXCEEDING.
+    # P50 = median, P75 = 25th percentile, P90 = 10th percentile, P99 = 1st.
+    p = {f"P{int(q)}": float(np.quantile(samples, 1.0 - q / 100.0))
          for q in (50, 75, 90, 99)}
     mean = float(samples.mean())
     sd = float(samples.std(ddof=1))

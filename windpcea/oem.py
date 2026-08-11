@@ -52,10 +52,10 @@ TEXT_STATUS = {
 OEM_PROFILES = {
     "generic": {
         "power": ["active power", "power", "p_avg", "pavg", "power_kw", "powerkw"],
-        "winddir": ["wind direction", "wind dir", "winddir", "ambient wind dir"],
         "ws": ["wind speed", "windspeed", "wind_speed", "ws"],
         "dir": ["nacelle direction", "nacelle position", "wind direction",
                 "direction", "nacelle", "dir", "wd"],
+        "wind_dir": ["ambient wind dir", "wind dir", "winddir", "amb_winddir", "wd_abs"],
         "temp": ["ambient temp", "ambient temperature", "temperature", "temp", "t_avg"],
         "status": ["turbine state", "state code", "status code", "status", "state",
                    "error code"],
@@ -94,8 +94,8 @@ OEM_PROFILES = {
         "power": ["active power", "power", "grd_prod", "grid prod", "gridprod",
                   "grprod", "gprod", "prod"],
         "ws": ["wind speed", "windspeed", "amb_wind", "ws"],
-        "dir": ["direction", "nac_direc", "nacelle dir", "wd"],
-        "winddir": ["wind dir", "winddir", "amb_wind_dir", "wind direction"],
+        "dir": ["wind direction", "direction", "nac_direc", "nacelle dir", "wd"],
+        "wind_dir": ["amb_winddir", "wind dir", "winddir", "amb wind dir"],
         "temp": ["temperature", "amb_tems", "nac_temp", "temp"],
         "status": ["status code", "sys_stats", "status", "state"],
         "turbine": ["device name", "device_name", "asset name", "assetnam",
