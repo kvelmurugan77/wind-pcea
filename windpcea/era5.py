@@ -34,7 +34,7 @@ def _om_hourly(lat, lon, start, end, height_m=100):
     url = ("https://archive-api.open-meteo.com/v1/archive"
            f"?latitude={lat}&longitude={lon}"
            f"&start_date={start}&end_date={end}"
-           f"&hourly={var}&timezone=UTC")
+           f"&hourly={var},temperature_2m&timezone=UTC")
     r = requests.get(url, timeout=120)
     r.raise_for_status()
     j = r.json()
@@ -48,7 +48,9 @@ def _om_hourly(lat, lon, start, end, height_m=100):
                "wind_speed_100m": 100, "wind_speed_120m": 120}[var]
     if abs(model_h - height_m) > 1:
         ws = ws * (height_m / model_h) ** 0.2
-    out = pd.DataFrame({"ws": ws})
+    temp = pd.to_numeric(pd.Series(hourly.get("temperature_2m", np.nan),
+                                   index=idx), errors="coerce")
+    out = pd.DataFrame({"ws": ws, "temp_c": temp})
     out.index.name = "date"
     return out
 

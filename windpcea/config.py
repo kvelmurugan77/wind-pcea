@@ -35,7 +35,14 @@ DEFAULTS = {
     "era5_source": "open-meteo",   # open-meteo (ERA5T, free no key) | cds (needs CDS key)
     "era5_start_year": None,       # default: last full year - 24
     "era5_end_year": None,         # default: last full year
-    "lt_primary_method": "method_a",  # method_a | method_b (production regression) | method_b_auto
+    "lt_primary_method": "method_a",  # method_a | method_b | method_b_auto | ul (UL/OEPR Step-1)
+    "excluded_months": [],            # UL Step-1: months to drop (YYYY-MM) - ice storms, meter errors
+    "ul_normalize_days": 30.0,        # UL Eq. 3: 30-day normalization
+    "lt_density_correction": True,    # UL Eq. 4: density-correct reference wind speeds
+    "site_elevation_m": 0.0,          # site elevation for density correction (barometric)
+    "future_losses": {},              # optional UL-style future loss stack applied to LT net:
+                                      # {"availability_pct": 3.0, "curtailment_pct": 1.4,
+                                      #  "electrical_pct": 2.0, "blade_degradation_pct": 1.5}
     "nasa_power_start_year": 2001,
     "air_density_correction": True,
     "air_pressure_kpa": None,      # site mean pressure; if None assume 101.325 (sea level)

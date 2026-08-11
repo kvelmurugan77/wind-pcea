@@ -777,6 +777,36 @@ R² = {m['fit']['r2']:.2f} (n = {m['fit']['n']} months) → LT annual gross
 {_fmt(prod.get('lt_gross_mwh') or r['losses']['gross_lt_mwh_method_b'])} MWh/yr ·
 <b>used for the loss tree: {used}</b>.</div>""")
 
+    # UL/OEPR Step-1 method section
+    ul_lt = cl.get("ul_lt")
+    parts.append("<h3>6.2&nbsp;&nbsp;UL/OEPR Step-1 method (monthly production regression)</h3>")
+    if ul_lt is not None:
+        parts.append(
+            "<p class='lead'>This replicates the UL OEPR long-term method: monthly gross energy "
+            "normalised to " + str(ul_lt['normalize_days']) + "-day months (Eq. 3), density-corrected "
+            "reference wind speeds (Eq. 4, " +
+            ("enabled" if ul_lt['density_correction'] else "disabled") +
+            "), OLS regression Prod_norm = a·WS_ref + b (Eq. 5), applied to the full long-term "
+            "record and de-normalised to calendar months (Eq. 6).</p>")
+        excl = ul_lt.get('excluded_months') or []
+        parts.append(
+            "<div class='formula'>Prod_norm = " + f"{ul_lt['a']:.1f}" + " x WS_ref "
+            + ("+" if ul_lt['b'] >= 0 else "-") + f" {abs(ul_lt['b']):.1f}"
+            + "&nbsp;&nbsp;(R² = " + f"{ul_lt['r2']:.3f}" + ", n = " + str(ul_lt['n'])
+            + " months" + (", excluded: " + ", ".join(excl) if excl else "") + ")</div>")
+        parts.append(
+            "<div class='note'><b>UL/OEPR Step-1 LT gross: " + _fmt(ul_lt['lt_gross_mwh']) +
+            " MWh/yr</b> - annualised sum of the predicted calendar-month gross energy over " +
+            f"{cl['lt_n_years']:.1f} years of reference wind.</div>")
+        parts.append(html_table(
+            ul_lt["monthly_gross"].head(24),
+            formats={"gross_norm_mwh": lambda v: _fmt(v, 0)},
+            caption="Normalised monthly gross energy used in the regression (first 24 months)"))
+    else:
+        parts.append("<div class='note'>UL/OEPR Step-1 not available - need a long-term reference "
+                     "and at least 6 months of measured data. Enable with a reference file or "
+                     "ERA5T/MERRA-2 fetch, and set lt_primary_method='ul'.</div>")
+
     # ---------------- loss tree ----------------
     parts.append("<h2>8&nbsp;&nbsp;Loss tree &amp; net energy yield</h2>")
     parts.append(f"""<p class="lead">Gross AEP (long-term) = {_fmt(gross_lt)} MWh/yr is obtained by the
@@ -814,6 +844,13 @@ Full derivation in Appendix B.</div>""")
         tree, formats={"energy_mwh": lambda v: (_fmt(v) if v is not None else "input"),
                        "pct_of_gross": lambda v: _pct(v, 2)},
         caption="Loss tree — losses as % of gross AEP"))
+    flr = r["losses"]["recon"].get("future_loss_stack")
+    if flr:
+        parts.append(
+            "<div class='note'><b>Future-loss stack applied (UL OEPR style):</b> "
+            + " x ".join(f"{k.replace('_pct','')} = {v:.1f}%" for k, v in flr.items())
+            + " -> total " + _pct(r["losses"]["recon"].get("future_loss_total_pct", 0.0), 2)
+            + ", net = gross x (1 - stack).</div>")
     # detailed loss calculations (DNV-style: formula + measured values)
     E = r["energy"]
     parts.append("<h3>How each loss is calculated</h3>")

@@ -249,6 +249,9 @@ def run_analysis(cfg, scada_path, outdir=None):
     # applied to the long-term record) — the primary method when it works
     production = ltp_mod.lt_production_assessment(cfg, df, climate)
     climate["production"] = production
+    # UL/OEPR Step-1 assessment (monthly production regression, Eq. 3-6)
+    ul_lt = ltp_mod.ul_lt_assessment(cfg, df, climate, ref=climate.get("ref"))
+    climate["ul_lt"] = ul_lt
     if production:
         # sanity check: production-based LT gross must be physically plausible
         # relative to the Weibull x curve method; flag degenerate fits
@@ -287,7 +290,16 @@ def run_analysis(cfg, scada_path, outdir=None):
                            / gross_lt_mwh_a)
             use_b = production.get("record_months", 0) >= 12 and fit_r2 >= 0.5 \
                 and diff_pct <= 15.0
-    if use_b:
+    use_ul = False
+    if ul_lt is not None:
+        if cfg.get("lt_primary_method") == "ul":
+            use_ul = True
+        elif cfg.get("lt_primary_method") == "method_b" and ul_lt["r2"] >= 0.5:
+            use_ul = True
+    if use_ul:
+        gross_lt_mwh = ul_lt["lt_gross_mwh"]
+        lt_method_used = "UL/OEPR monthly production regression (Step 1)"
+    elif use_b:
         gross_lt_mwh = production["lt_gross_mwh"]
         lt_method_used = f"Production regression ({production['primary']})"
     else:
@@ -306,6 +318,18 @@ def run_analysis(cfg, scada_path, outdir=None):
     tree, net_mwh, recon = losses_mod.build_loss_tree(
         cfg, energy, wake_used_mwh, perf_energy_mwh, gross_period_mwh, gross_lt_mwh)
     wake["wake_model_used"] = wake_model_used
+    # UL-style future loss stack (overrides measured losses for LT net)
+    fl = cfg.get("future_losses") or {}
+    if fl and any(v for v in fl.values()):
+        fl_loss = 1.0
+        for k in ("availability_pct", "curtailment_pct", "electrical_pct",
+                  "blade_degradation_pct"):
+            fl_loss *= (1.0 - float(fl.get(k, 0.0)) / 100.0)
+        net_mwh = gross_lt_mwh * fl_loss
+        recon["future_loss_stack"] = {k: float(fl.get(k, 0.0)) for k in
+                                      ("availability_pct", "curtailment_pct",
+                                       "electrical_pct", "blade_degradation_pct")}
+        recon["future_loss_total_pct"] = 100.0 * (1.0 - fl_loss)
 
     cf = 100.0 * net_mwh * 1000.0 / (float(cfg["rated_power_kw"]) * n_turb * 8760.0)
     benchmark = None

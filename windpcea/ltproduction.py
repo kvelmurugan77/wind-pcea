@@ -162,3 +162,113 @@ def lt_production_assessment(cfg, df, climate, min_record_months=3.0):
     out["record_months"] = record_months
     out["lt_gross_mwh"] = out[primary]["lt_annual_gross_mwh"] if primary else None
     return out
+
+
+# ===========================================================================
+# UL / OEPR Step-1 method (faithful implementation of the UL OEPR approach)
+# ===========================================================================
+def ul_monthly_energy(df, normalize_days=30.0, min_days=20):
+    """UL OEPR Eq. 3: monthly gross energy normalized to a 30-day month.
+
+    Prod_norm = Prod_100 * (30 / Days_month)
+    Months with fewer than min_days of records are dropped.
+    """
+    e = daily_gross_energy(df)
+    mon = e.groupby(e.index.to_period("M")).agg(["sum", "count"])
+    days = mon["count"]
+    energy = mon["sum"] * normalize_days / days.clip(lower=1)
+    energy = energy[days >= min_days]
+    energy.index = energy.index.to_timestamp()   # month-start
+    return energy
+
+
+def site_air_density_ratio(elevation_m, temp_c):
+    """Site air density relative to standard (1.225 kg/m3 at 15 C, 101.325 kPa)
+    using the barometric pressure at elevation (UL used MERRA-2 density)."""
+    p_kpa = 101.325 * (1.0 - 2.25577e-5 * elevation_m) ** 5.25588
+    rho = p_kpa * 1000.0 / (287.05 * (np.asarray(temp_c, dtype=float) + 273.15))
+    return rho / 1.225
+
+
+def density_correct_ws(ws, rho_ratio):
+    """UL OEPR Eq. 4: Vn = Vobs * (rho_obs / rho0)^(1/3)."""
+    return np.asarray(ws, dtype=float) * np.power(np.clip(rho_ratio, 0.5, 1.5), 1.0 / 3.0)
+
+
+def ul_lt_assessment(cfg, df, climate, ref=None):
+    """Full UL/OEPR Step-1 long-term assessment.
+
+    1. Monthly gross energy (30-day normalized, UL Eq. 3), excluding the
+       configured months (ice storms, meter errors, low availability).
+    2. Density-correct the reference monthly wind speeds (UL Eq. 4) using
+       reference monthly temperature and site elevation.
+    3. OLS regression Prod_norm = a * WS_ref + b (UL Eq. 5).
+    4. Apply to the full LT reference record -> LT normalized monthly gross,
+       de-normalized to calendar months (UL Eq. 6) and annualised.
+
+    Returns dict (or None if not enough data):
+      stats, r2, a, b, lt_gross_mwh, monthly tables, excluded months, n.
+    """
+    excluded = set(str(m) for m in (cfg.get("excluded_months") or []))
+    normalize_days = float(cfg.get("ul_normalize_days", 30.0))
+    elevation = float(cfg.get("site_elevation_m") or 0.0)
+    do_density = bool(cfg.get("lt_density_correction", True))
+
+    energy = ul_monthly_energy(df, normalize_days=normalize_days)
+    energy = energy[~energy.index.to_period("M").astype(str).isin(excluded)]
+    if len(energy) < 6 or ref is None or len(ref) < 12:
+        return None
+
+    # reference monthly wind (+ temperature when available)
+    ref_mon = ref["ws"].resample("ME").mean()
+    ref_mon.index = ref_mon.index.to_period("M").to_timestamp()
+    ref_mon = ref_mon[ref_mon.index.to_period("M").astype(str).isin(
+        energy.index.to_period("M").astype(str))]
+
+    ws_ref_m = ref_mon.reindex(energy.index)
+    if do_density:
+        if "temp_c" in ref.columns and ref["temp_c"].notna().any():
+            ref_temp = ref["temp_c"].resample("ME").mean().reindex(energy.index)
+            rho = site_air_density_ratio(elevation, ref_temp.fillna(15.0))
+            rho0 = float(np.nanmean(rho))
+            ws_ref_m = density_correct_ws(ws_ref_m.values, rho / rho0)
+        else:
+            # no temperature: constant density ratio has no effect on the fit
+            ws_ref_m = ws_ref_m.values
+    else:
+        ws_ref_m = ws_ref_m.values
+
+    j = pd.DataFrame({"E": energy.values, "WS": ws_ref_m}).dropna()
+    if len(j) < 6:
+        return None
+    res = stats.linregress(j["WS"], j["E"])
+    a, b = float(res.slope), float(res.intercept)
+    r2 = float(res.rvalue ** 2)
+
+    # apply Eq. 5 to the FULL LT reference record (density-corrected)
+    lt_ref_mon = ref["ws"].resample("ME").mean()
+    lt_ref_mon.index = lt_ref_mon.index.to_period("M").to_timestamp()
+    if do_density and "temp_c" in ref.columns and ref["temp_c"].notna().any():
+        lt_temp = ref["temp_c"].resample("ME").mean()
+        lt_rho = site_air_density_ratio(elevation, lt_temp.fillna(15.0))
+        lt_ws = density_correct_ws(lt_ref_mon.values, lt_rho / rho0)
+    else:
+        lt_ws = lt_ref_mon.values
+    lt_norm = a * lt_ws + b
+    lt_norm = np.clip(lt_norm, 0.0, None)
+
+    # Eq. 6: convert 30-day normalized back to calendar months
+    days_in_month = lt_ref_mon.index.days_in_month.astype(float).values
+    lt_gross_month = lt_norm * days_in_month / normalize_days
+    lt_annual = float(lt_gross_month.sum() / climate["lt_n_years"])
+
+    return {"method": "UL/OEPR monthly production regression (Step 1)",
+            "a": a, "b": b, "r2": r2, "n": int(len(j)),
+            "normalize_days": normalize_days,
+            "density_correction": do_density,
+            "excluded_months": sorted(excluded),
+            "lt_gross_mwh": lt_annual,
+            "monthly_gross": pd.DataFrame({"month": energy.index.to_period("M").astype(str),
+                                           "gross_norm_mwh": energy.values}),
+            "lt_monthly_gross": pd.DataFrame({"month": lt_ref_mon.index.to_period("M").astype(str),
+                                              "gross_mwh": lt_gross_month})}

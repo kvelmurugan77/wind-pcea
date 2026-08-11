@@ -52,17 +52,23 @@ def fetch_nasa_power_daily(lat, lon, start="20010101", end=None):
     if end is None:
         end = dt.date.today().strftime("%Y%m%d")
     url = ("https://power.larc.nasa.gov/api/temporal/daily/point"
-           f"?parameters=WS50M&community=RE&longitude={lon}&latitude={lat}"
+           f"?parameters=WS50M,T2M&community=RE&longitude={lon}&latitude={lat}"
            f"&start={start}&end={end}&format=JSON")
     import requests
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     data = r.json()
-    raw = data["properties"]["parameter"]["WS50M"]
+    par = data["properties"]["parameter"]
+    raw = par["WS50M"]
     idx = pd.to_datetime(list(raw.keys()), format="%Y%m%d")
-    vals = pd.to_numeric(pd.Series(list(raw.values())), errors="coerce")
-    out = pd.DataFrame({"ws": vals.values}, index=idx)
-    out = out[(out["ws"] > 0)].dropna()
+    ws = pd.to_numeric(pd.Series(list(raw.values())), errors="coerce")
+    if "T2M" in par:
+        t2m = pd.to_numeric(pd.Series(list(par["T2M"].values())), errors="coerce")
+        temp = pd.Series(t2m.values, index=idx)
+    else:
+        temp = pd.Series(np.nan, index=idx)
+    out = pd.DataFrame({"ws": ws.values, "temp_c": temp.values}, index=idx)
+    out = out[(out["ws"] > 0)].dropna(subset=["ws"])
     return out
 
 
