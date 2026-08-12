@@ -322,6 +322,15 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
 
     # ---------------- executive summary ----------------
     parts.append("<h2>1&nbsp;&nbsp;Executive summary</h2>")
+    if meta.get("data_sources"):
+        ds = pd.DataFrame(meta["data_sources"])
+        parts.append(html_table(
+            ds, formats={"rows": lambda v: _fmt(v, 0),
+                         "turbines": lambda v: _fmt(v, 0)},
+            caption="Input data files (traceability of every source file)"))
+        if meta.get("deduped_rows"):
+            parts.append(f"<div class='note ok'>Duplicate records across input files: "
+                         f"{_fmt(meta['deduped_rows'])} removed (later file wins).</div>")
     parts.append(f"""<div class="cards">
 <div class="card"><div class="k">Gross AEP (long-term)</div><div class="v">{_fmt(gross_lt)}</div>
 <div class="s">MWh/yr, warranted curve</div></div>
@@ -345,6 +354,44 @@ SCADA period {meta['record_start']} → {meta['record_end']} &nbsp;•&nbsp; Rep
     for _w in (r["qc"].get("warnings") or []):
         parts.append(f"<div class='note' style='border-left-color:#C0504D;background:#fdf0ef;"
                      f"color:#7a2e2a'><b>⚠ {_w}</b></div>")
+
+    # ---- process overview & key confirmations (DNV replica clarity) ----
+    parts.append("<h2>1.1&nbsp;&nbsp;Process overview &amp; key confirmations</h2>")
+    parts.append(
+        "<p class='lead'>This assessment follows the DNV/UL operational energy assessment "
+        "workflow end-to-end. Each stage maps to its report section, so the process is fully "
+        "traceable from raw SCADA to the final P-values.</p>"
+        "<ol class='det'>"
+        "<li><b>Data ingest &amp; QC</b> (Section 2) - single or multiple SCADA files, 10-min "
+        "resampling, operating-state classification, gap filling, capture-rate reporting.</li>"
+        "<li><b>Availability correction</b> (Section 3) - <b>energy-based availability</b> per "
+        "IEC 61400-26-2: lost energy during downtime is estimated from the warranted power curve "
+        "at the measured wind speed and used to correct production (A_E = E_act/(E_act+E_down)).</li>"
+        "<li><b>Power curve &amp; performance</b> (Section 4) - IEC 61400-12-1 binning, "
+        "air-density correction, energy-weighted deviation vs warranted curve, yaw screening "
+        "(Section 5).</li>"
+        "<li><b>Wake losses</b> (Section 6) - layout-based Bastankhah-Gaussian model (when a "
+        "layout file is provided) with SCADA cross-check.</li>"
+        "<li><b>Long-term climate</b> (Section 7) - <b>ERA5T reanalysis reference</b> (or a user "
+        "file) with MCP correlation; long-term Weibull.</li>"
+        "<li><b>Long-term AEP</b> (Sections 7-8) - UL/OEPR Step-1 monthly production regression "
+        "(Eq. 3-6) applied to the <b>ERA5T reference record</b>; Method A cross-check.</li>"
+        "<li><b>Loss tree &amp; net yield</b> (Section 8) - every loss category measured and "
+        "mapped to net AEP.</li>"
+        "<li><b>Uncertainty &amp; P-values</b> (Section 9) - Monte Carlo, DNV exceedance "
+        "convention (P90 &lt; P75 &lt; P50).</li>"
+        "<li><b>Sensitivity, conclusions, traceability</b> (Sections 10-11, Appendix E).</li>"
+        "</ol>")
+    parts.append(
+        "<div class='note ok'><b>Confirmations requested:</b><br>"
+        "1. <b>Energy correction for WTG availability is applied:</b> production-based "
+        "availability (A_E) corrects energy for downtime using the warranted curve (Section 3), "
+        "and the loss tree (Section 8) carries the corresponding energy loss.<br>"
+        "2. <b>Long-term reference (ERA5T) is used for the LT AEP:</b> the ERA5T reanalysis "
+        "record (2000-2025, hub-height corrected) is fetched from the site coordinates and used "
+        "in the MCP (Section 7) and in the UL/OEPR Step-1 monthly regression (Section 7.2) to "
+        "estimate the long-term AEP. When a user reference file is supplied it is used instead, "
+        "and the method is stated in Section 7 and Appendix E.</div>")
 
     # DNV-style key results table
     kr = pd.DataFrame({
@@ -397,6 +444,15 @@ Supported OEM exports: Vestas, Siemens Gamesa (SGRE), Suzlon, Envision, Nordex, 
 column conventions, including text status codes, European date/decimal formats, semicolon-delimited files
 and MW units. Large datasets are streamed in chunks with only the needed columns loaded, so multi-GB /
 multi-year / multi-hundred-turbine exports are handled within bounded memory.</div>""")
+    if meta.get("data_sources"):
+        ds = pd.DataFrame(meta["data_sources"])
+        parts.append(html_table(
+            ds, formats={"rows": lambda v: _fmt(v, 0),
+                         "turbines": lambda v: _fmt(v, 0)},
+            caption="Input data files (traceability of every source file)"))
+        if meta.get("deduped_rows"):
+            parts.append(f"<div class='note ok'>Duplicate records across input files: "
+                         f"{_fmt(meta['deduped_rows'])} removed (later file wins).</div>")
     parts.append(f"""<div class="cards">
 <div class="card"><div class="k">Turbines</div><div class="v">{meta['num_turbines']}</div>
 <div class="s">{', '.join(meta['turbines'][:6])}{'…' if meta['num_turbines']>6 else ''}</div></div>
@@ -457,6 +513,15 @@ multi-year / multi-hundred-turbine exports are handled within bounded memory.</d
     ds = E["downtime_split"] or {}
     ds_html = "".join(f"<tr><td>{k}</td><td style='text-align:right'>{_fmt(v)} MWh</td></tr>"
                       for k, v in sorted(ds.items(), key=lambda x: -x[1])) if ds else ""
+    if meta.get("data_sources"):
+        ds = pd.DataFrame(meta["data_sources"])
+        parts.append(html_table(
+            ds, formats={"rows": lambda v: _fmt(v, 0),
+                         "turbines": lambda v: _fmt(v, 0)},
+            caption="Input data files (traceability of every source file)"))
+        if meta.get("deduped_rows"):
+            parts.append(f"<div class='note ok'>Duplicate records across input files: "
+                         f"{_fmt(meta['deduped_rows'])} removed (later file wins).</div>")
     parts.append(f"""<div class="cards">
 <div class="card"><div class="k">Time-based availability</div><div class="v">{_pct(avail['time_avail_pct'])}</div>
 <div class="s">mean across turbines</div></div>
@@ -1045,6 +1110,7 @@ certification-grade work.</li>
         parts.append("<p class='lead'>This appendix documents every input, processing step and "
                      "reference used, so the assessment is reproducible and auditable.</p>")
         rows = [("Tool version", tr.get("tool_version")),
+                ("Input files", "; ".join(s.get("file", "") for s in (meta.get("data_sources") or [])) or "single file"),
                 ("Generated", tr.get("generated_at")),
                 ("Farm", tr.get("farm")),
                 ("Record period", " -> ".join(tr.get("record_period") or [])),

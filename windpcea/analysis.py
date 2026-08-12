@@ -66,19 +66,40 @@ def load_warranted_curve(cfg):
     return df, note
 
 
-def run_analysis(cfg, scada_path, outdir=None):
+def run_analysis(cfg, scada_path=None, outdir=None, scada_files=None):
     cfg_mod.validate_config(cfg)
     if outdir:
         os.makedirs(outdir, exist_ok=True)
 
-    # ---------------- load & prepare data ----------------
-    df, profile_key = scada_mod.load_scada(
-        scada_path,
-        profile_key=cfg.get("oem_profile", "auto"),
-        column_overrides=cfg.get("column_aliases"),
-        column_map=cfg.get("column_map") or None,
-        chunksize=int(cfg.get("csv_chunk_rows", 1_000_000)),
-        use_float32=bool(cfg.get("use_float32", False)))
+    # ---------------- load & prepare data (single or multiple files) ------
+    from . import multifile as multifile_mod
+    data_sources = []
+    overlap_warnings = []
+    if scada_files and len(scada_files) > 1:
+        df, data_sources, overlap_warnings = multifile_mod.load_multiple(
+            scada_files,
+            profile_key=cfg.get("oem_profile", "auto"),
+            column_overrides=cfg.get("column_aliases"),
+            column_map=cfg.get("column_map") or None,
+            chunksize=int(cfg.get("csv_chunk_rows", 1_000_000)),
+            use_float32=bool(cfg.get("use_float32", False)))
+        profile_key = data_sources[0]["profile"] if data_sources else "generic"
+    else:
+        path = scada_path or (scada_files[0] if scada_files else None)
+        if not path:
+            raise ValueError("No SCADA input provided")
+        df, profile_key = scada_mod.load_scada(
+            path,
+            profile_key=cfg.get("oem_profile", "auto"),
+            column_overrides=cfg.get("column_aliases"),
+            column_map=cfg.get("column_map") or None,
+            chunksize=int(cfg.get("csv_chunk_rows", 1_000_000)),
+            use_float32=bool(cfg.get("use_float32", False)))
+        data_sources = [{"file": os.path.basename(path), "rows": int(len(df)),
+                         "turbines": int(df["turbine"].nunique()),
+                         "start": str(df["timestamp"].min()),
+                         "end": str(df["timestamp"].max()),
+                         "profile": profile_key}]
     if df.empty:
         raise ValueError("No valid SCADA records after loading")
     df["turbine"] = df["turbine"].astype(str)
@@ -127,6 +148,8 @@ def run_analysis(cfg, scada_path, outdir=None):
         "oem_profile": oem_mod.display_name(profile_key),
         "oem_profile_key": profile_key,
         "read_info": df.attrs.get("read_info", {"method": "single pass", "chunks": 1}),
+        "data_sources": data_sources,
+        "deduped_rows": int(df.attrs.get("deduped_rows", 0)),
     }
 
     # ---------------- QC summary ----------------
@@ -136,7 +159,7 @@ def run_analysis(cfg, scada_path, outdir=None):
     qc = {"flag_counts": flag_counts, "coverage_pct": float(coverage_pct),
           "expected_rows_per_turbine": expected_rows,
           "rows": len(df), "n_turbines": n_turb,
-          "warnings": _qc_warnings(df, flag_counts)}
+          "warnings": _qc_warnings(df, flag_counts) + list(overlap_warnings)}
 
     # ---------------- energy accounting & availability ----------------
     energy = avail_mod.energy_accounting(df, cfg)

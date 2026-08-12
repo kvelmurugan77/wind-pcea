@@ -1,0 +1,46 @@
+{
+  "farm_name": "Blue Cloud Wind Project",
+  "latitude": 34.039753,
+  "longitude": -102.651647,
+  "hub_height_m": 87.0,
+  "rotor_diameter_m": 126.0,
+  "rated_power_kw": 3450.0,
+  "num_turbines": 43,
+  "cut_in_mps": 3.0,
+  "cut_out_mps": 25.0,
+  "site_elevation_m": 1182.0,
+  "warranted_power_curve": "vestas_v126_3450.csv",
+  "layout_file": "blue_cloud_layout.csv",
+  "long_term_source": "era5",
+  "lt_primary_method": "ul",
+  "excluded_months": [
+    "2021-02",
+    "2022-03"
+  ],
+  "ul_normalize_days": 30.0,
+  "lt_density_correction": true,
+  "future_losses": {
+    "availability_pct": 3.0,
+    "curtailment_pct": 1.4,
+    "electrical_pct": 2.0,
+    "blade_degradation_pct": 1.5
+  },
+  "status_codes": {
+    "operating": [
+      0,
+      1
+    ],
+    "fault": [
+      4
+    ],
+    "maintenance": [],
+    "grid": [],
+    "curtailment": [],
+    "environmental": []
+  },
+  "air_density_correction": true,
+  "air_pressure_kpa": 88.7,
+  "electrical_loss_pct": 2.0,
+  "other_loss_pct": 0.5,
+  "mc_iterations": 20000
+}

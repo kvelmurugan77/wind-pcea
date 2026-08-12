@@ -14,7 +14,9 @@ def main(argv=None):
         description="WindPCEA — post-construction energy yield assessment "
                     "(DNV-style analysis from SCADA data)")
     ap.add_argument("--config", required=True, help="JSON configuration file")
-    ap.add_argument("--scada", required=True, help="SCADA data file (CSV/XLSX)")
+    ap.add_argument("--scada", nargs="+", required=True,
+                    help="SCADA data file(s) (CSV/XLSX) - multiple allowed "
+                         "(e.g. per-year exports); concatenated automatically")
     ap.add_argument("--outdir", default="results", help="output directory")
     ap.add_argument("--blockwise", action="store_true",
                     help="out-of-core mode for very large files (1 GB+); "
@@ -27,12 +29,17 @@ def main(argv=None):
     os.makedirs(args.outdir, exist_ok=True)
 
     print(f"WindPCEA — running post-construction assessment on {args.scada} ...")
+    if len(args.scada) > 1:
+        print(f"  multi-file mode: {len(args.scada)} input files")
     if args.blockwise:
         print("  mode: blockwise out-of-core (bounded memory)")
-        results = run_blockwise(cfg, args.scada, outdir=args.outdir,
-                                block_days=args.block_days)
+        results = run_blockwise(cfg, args.scada[0] if len(args.scada) == 1 else None,
+                                outdir=args.outdir, block_days=args.block_days,
+                                scada_files=args.scada if len(args.scada) > 1 else None)
     else:
-        results = run_analysis(cfg, args.scada, outdir=args.outdir)
+        results = run_analysis(cfg, args.scada[0] if len(args.scada) == 1 else None,
+                               outdir=args.outdir,
+                               scada_files=args.scada if len(args.scada) > 1 else None)
 
     html = build_html(results, args.outdir)
     xlsx = export_excel(results, args.outdir)

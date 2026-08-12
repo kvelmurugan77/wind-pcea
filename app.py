@@ -96,9 +96,11 @@ IEC power curve analysis, wake analysis, long-term correction (MCP), loss tree a
 <h2>Run the assessment</h2>
 <div class="grid2">
 <div>
-<label>SCADA data file (CSV / XLSX) *</label>
-<input type="file" id="scada" accept=".csv,.xlsx,.xls">
-<div class="hint">10-min (or finer) records. Long format: timestamp, turbine_id, power_kw, wind_speed_mps,
+<label>SCADA data files (CSV / XLSX) *</label>
+<input type="file" id="scada" accept=".csv,.xlsx,.xls" multiple>
+<div class="hint">Select one or several files (per-year exports, per-turbine groups) - they are
+concatenated automatically with de-duplication and per-file traceability.
+10-min (or finer) records. Long format: timestamp, turbine_id, power_kw, wind_speed_mps,
 nacelle_dir_deg, status_code, temp_c … or wide format: T01_power_kw, T01_wind_speed_mps …</div>
 <label>Config JSON (optional)</label>
 <input type="file" id="cfgfile" accept=".json">
@@ -229,9 +231,12 @@ async function runAnalyze(sample){
     fd.append('lat', document.getElementById('lat').value);
     fd.append('lon', document.getElementById('lon').value);
     fd.append('elec', document.getElementById('elec').value);
-    for(const [k,id] of [['scada','scada'],['cfgfile','cfgfile'],['curve','curve'],['ltfile','ltfile']]){
+    for(const [k,id] of [['cfgfile','cfgfile'],['curve','curve'],['ltfile','ltfile']]){
       const f = document.getElementById(id).files[0];
       if(f) fd.append(k, f);
+    }
+    for(const f of document.getElementById('scada').files){
+      fd.append('scada', f);
     }
     for(const id of ['power_col','ws_col','turbine_col','ts_col','dir_col','temp_col','status_col','curt_col']){
       const v = document.getElementById(id).value.trim();
@@ -283,9 +288,15 @@ def analyze():
             cfg = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
             outdir = run_dir
         else:
-            scada_path = _save_upload(request.files.get("scada"), run_dir, "scada.csv")
-            if not scada_path:
+            scada_files_up = request.files.getlist("scada")
+            if not scada_files_up:
                 return jsonify({"error": "SCADA file is required"}), 400
+            scada_paths = []
+            for idx, f in enumerate(scada_files_up):
+                p = _save_upload(f, run_dir, f"scada_{idx}_{f.filename or 'in'}")
+                if p:
+                    scada_paths.append(p)
+            scada_path = scada_paths[0]
             cfg_path = _save_upload(request.files.get("cfgfile"), run_dir, "config.json")
             cfg = cfg_mod.load_config(cfg_path) if cfg_path else cfg_mod.load_config(None)
             curve = _save_upload(request.files.get("curve"), run_dir, "warranted_power_curve.csv")
@@ -343,9 +354,11 @@ def analyze():
         use_blockwise = large is True or (
             large == "auto" and fsize_mb >= 900)
         if use_blockwise:
-            results = run_blockwise(cfg, scada_path, outdir=outdir)
+            results = run_blockwise(cfg, scada_path, outdir=outdir,
+                                    scada_files=scada_paths if len(scada_paths) > 1 else None)
         else:
-            results = run_analysis(cfg, scada_path, outdir=outdir)
+            results = run_analysis(cfg, scada_path, outdir=outdir,
+                                   scada_files=scada_paths if len(scada_paths) > 1 else None)
         report_path = build_html(results, outdir)
         # inject a download toolbar (HTML report + Excel) into the report page
         try:
@@ -419,7 +432,8 @@ def preview():
     """Show the uploaded file's columns + first rows, and what the tool
     would map them to. Removes all guessing about column names."""
     import pandas as pd
-    f = request.files.get("scada")
+    files = request.files.getlist("scada")
+    f = files[0] if files else None
     if not f:
         return jsonify({"error": "no file"}), 400
     path = os.path.join(RUNS, "_preview_tmp.csv")

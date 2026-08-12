@@ -289,7 +289,17 @@ def scan_scada(path, profile_key, column_overrides, column_map):
     return sorted(turbines), tmin, tmax, profile_key
 
 
-def run_blockwise(cfg, scada_path, outdir=None, block_days=None):
+def run_blockwise(cfg, scada_path=None, outdir=None, block_days=None,
+                  scada_files=None):
+    from . import multifile as multifile_mod
+    multi = scada_files and len(scada_files) > 1
+    if multi:
+        sources, overlap = multifile_mod.scan_files(
+            scada_files, cfg.get("oem_profile", "auto"),
+            cfg.get("column_aliases"), cfg.get("column_map") or None)
+        cfg["data_sources"] = sources
+        cfg["overlap_warnings"] = overlap
+        scada_path = scada_files[0]   # scan in the block loop reads per-file
     from .analysis import load_warranted_curve
     from . import config as cfg_mod
 
@@ -321,42 +331,47 @@ def run_blockwise(cfg, scada_path, outdir=None, block_days=None):
     interp_power = pc_mod.interp_power_factory(v_arr, p_arr)
 
     n_blocks = len(blocks)
-    prev_end = None
-    for bi, (bstart, bend) in enumerate(blocks):
-        dfb_all = _load_block(scada_path, bstart - pd.Timedelta(days=PAD_DAYS),
-                              bend, cfg, profile_key, v_arr, p_arr, interp_power)
-        if dfb_all.empty:
-            continue
-        f7 = dfb_all.loc[dfb_all["flag"] == 7].groupby("turbine").size()
-        tot = dfb_all.groupby("turbine").size()
-        share = (f7 / tot).fillna(0.0)
-        bad_anem = set(share[share > 0.02].index)
-        free = wake_mod.free_stream_ws(dfb_all, exclude_turbines=bad_anem,
-                                       n_free=int(cfg.get("n_free_turbines", 3)),
-                                       sector_width=int(cfg.get("sector_width_deg", 30)))
-        acc.add_wake_block(dfb_all, free, interp_power)
-        # accumulate only the rows that belong to THIS block (blocks overlap
-        # by PAD_DAYS for rolling-window continuity — do not double count)
-        acc_start = bstart if prev_end is None else max(bstart, prev_end)
-        for tid in turbines:
-            dfb = dfb_all[dfb_all["turbine"] == tid]
-            if dfb.empty:
+    # multi-file: loop each file's blocks into the same accumulator
+    file_paths = scada_files if (scada_files and len(scada_files) > 1) else [scada_path]
+    _bi = 0
+    for _f in file_paths:
+        prev_end = None
+        for bstart, bend in blocks:
+            _bi += 1
+            dfb_all = _load_block(_f, bstart - pd.Timedelta(days=PAD_DAYS),
+                                  bend, cfg, profile_key, v_arr, p_arr, interp_power)
+            if dfb_all.empty:
                 continue
-            dfb = dfb[(dfb["timestamp"] >= acc_start) & (dfb["timestamp"] < bend)]
-            if dfb.empty:
-                continue
-            acc.add_block(dfb, tid)
-        prev_end = bend
-        try:
-            import resource as _res
-            _mb = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss / 1024.0
-        except Exception:
-            _mb = -1
-        print(f"  block {bi+1}/{n_blocks} ({len(dfb_all):,} rows, "
-              f"peak {_mb:.0f} MB, acc rows {acc.rows:,})")
+            f7 = dfb_all.loc[dfb_all["flag"] == 7].groupby("turbine").size()
+            tot = dfb_all.groupby("turbine").size()
+            share = (f7 / tot).fillna(0.0)
+            bad_anem = set(share[share > 0.02].index)
+            free = wake_mod.free_stream_ws(dfb_all, exclude_turbines=bad_anem,
+                                           n_free=int(cfg.get("n_free_turbines", 3)),
+                                           sector_width=int(cfg.get("sector_width_deg", 30)))
+            acc.add_wake_block(dfb_all, free, interp_power)
+            acc_start = bstart if prev_end is None else max(bstart, prev_end)
+            for tid in turbines:
+                dfb = dfb_all[dfb_all["turbine"] == tid]
+                if dfb.empty:
+                    continue
+                dfb = dfb[(dfb["timestamp"] >= acc_start) & (dfb["timestamp"] < bend)]
+                if dfb.empty:
+                    continue
+                acc.add_block(dfb, tid)
+            prev_end = bend
+            try:
+                import resource as _res
+                _mb = _res.getrusage(_res.RUSAGE_SELF).ru_maxrss / 1024.0
+            except Exception:
+                _mb = -1
+            print(f"  block {_bi}/{n_blocks} [{os.path.basename(_f)}] "
+                  f"({len(dfb_all):,} rows, peak {_mb:.0f} MB, acc rows {acc.rows:,})")
 
     results = _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax,
-                        n_turb, turbines, curve_note, outdir, n_blocks, profile_key)
+                        n_turb, turbines, curve_note, outdir, n_blocks, profile_key,
+                        data_sources=cfg.get("data_sources"),
+                        deduped_rows=0)
     return results
 
 
@@ -415,7 +430,8 @@ def _load_block(path, start, end, cfg, profile_key, v_arr, p_arr, interp_power):
 
 
 def _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax, n_turb,
-              turbines, curve_note, outdir, n_blocks, profile_key):
+              turbines, curve_note, outdir, n_blocks, profile_key,
+              data_sources=None, deduped_rows=0):
     # ---- QC -------------------------------------------------------------
     rows = acc.rows
     expected_rows = int((tmax - tmin).total_seconds() / 600.0)
@@ -553,7 +569,11 @@ def _finalize(cfg, acc, warr, v_arr, p_arr, interp_power, tmin, tmax, n_turb,
             "interval_h": 1.0 / 6.0, "rows": rows, "curve_note": curve_note,
             "oem_profile": oem_mod.display_name(profile_key),
             "oem_profile_key": profile_key,
-            "read_info": {"method": f"blockwise out-of-core ({n_blocks} blocks)"}}
+            "read_info": {"method": f"blockwise out-of-core ({n_blocks} blocks)"},
+            "data_sources": data_sources or
+                            [{"file": "scada input", "rows": acc.rows,
+                              "turbines": n_turb, "start": str(tmin), "end": str(tmax)}],
+            "deduped_rows": deduped_rows}
     results = {
         "cfg": cfg, "meta": meta, "df": _sample_frame(acc, tmin),
         "qc": qc, "power_curve": power_curve, "wake": wake, "energy": energy,
