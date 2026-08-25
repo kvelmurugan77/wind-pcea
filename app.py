@@ -282,9 +282,16 @@ def analyze():
     run_dir = os.path.join(RUNS, run_id)
     os.makedirs(run_dir, exist_ok=True)
 
+    # NOTE: scada_paths must be defined in EVERY branch — it is referenced
+    # below for multi-file mode, and Python treats it as a local because it
+    # is assigned in the upload branch. If the demo branch skipped it, the
+    # "Run demo" button crashed with UnboundLocalError (v1.5.3 bug).
+    scada_paths = []
+    cfg = {}
     try:
         if is_sample:
             scada_path = os.path.join(SAMPLE, "scada_sample.csv")
+            scada_paths = [scada_path]
             cfg = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
             outdir = run_dir
         else:
@@ -296,6 +303,9 @@ def analyze():
                 p = _save_upload(f, run_dir, f"scada_{idx}_{f.filename or 'in'}")
                 if p:
                     scada_paths.append(p)
+            if not scada_paths:
+                return jsonify({"error": "SCADA file could not be read — "
+                                         "the upload was empty or failed."}), 400
             scada_path = scada_paths[0]
             cfg_path = _save_upload(request.files.get("cfgfile"), run_dir, "config.json")
             cfg = cfg_mod.load_config(cfg_path) if cfg_path else cfg_mod.load_config(None)
