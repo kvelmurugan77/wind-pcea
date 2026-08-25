@@ -136,6 +136,32 @@ def main():
     _cfg = cfg_mod.load_config(_p)
     run_case("string_config", d10, _cfg)
 
+    # 11) config-relative file paths (regression): the sample config
+    #     shipped with absolute sandbox paths baked in
+    #     (/home/user/wind_pcea/...), which silently degraded the analysis
+    #     to a generic power curve + missing long-term reference on any
+    #     other machine, in CI, and in the bundled EXE demo (gross AEP
+    #     61,410 vs 98,975 MWh). Relative paths must resolve against the
+    #     config file's directory from ANY working directory.
+    d11 = b.copy()
+    p11 = os.path.join(TMP, "case_relpaths.csv")
+    d11.to_csv(p11, index=False)
+    old_cwd = os.getcwd()
+    os.chdir(TMP)                      # simulate launching from elsewhere
+    try:
+        _cfg11 = cfg_mod.load_config(os.path.join(SAMPLE, "config.json"))
+        r11 = run_analysis(_cfg11, p11, outdir=os.path.join(TMP, "out_relpaths"))
+    finally:
+        os.chdir(old_cwd)
+    ga11 = r11["losses"]["gross_lt_mwh_method_a"]
+    assert ga11 > 90_000, (f"[config_relative_paths] gross AEP {ga11:,.0f} MWh — "
+                           f"warranted curve / long-term file were NOT resolved "
+                           f"(generic-fallback symptom)")
+    assert "loaded from" in str(r11["power_curve"]["note"]), \
+        "[config_relative_paths] warranted curve not loaded from file"
+    print(f"  OK  config_relative_paths       gross AEP={ga11:,.0f} MWh  "
+          f"(curve+LT file resolved from config dir)")
+
     print("\nAll robustness tests passed OK")
 
 

@@ -73,6 +73,9 @@ def load_config(path=None, overrides=None):
     Numeric fields are coerced to float/int so string-typed values in a
     hand-edited JSON can never break arithmetic ("3450" * 1.15 would
     otherwise raise 'can't multiply sequence by non-int of type float').
+    Relative file paths (power curve, long-term file, layout, CT curve) are
+    resolved against the config file's directory so the same config works
+    from any working directory / machine.
     """
     cfg = dict(DEFAULTS)
     if path and os.path.exists(path):
@@ -81,8 +84,35 @@ def load_config(path=None, overrides=None):
         _deep_merge(cfg, user)
     if overrides:
         _deep_merge(cfg, overrides)
+    _resolve_file_paths(cfg, path)
     _coerce_numeric(cfg)
     return cfg
+
+
+_PATH_FIELDS = ("warranted_power_curve", "long_term_wind_file",
+                "layout_file", "ct_curve")
+
+
+def _resolve_file_paths(cfg, config_path):
+    """Resolve relative CSV paths against the config file's directory.
+
+    Configs commonly reference inputs by bare filename
+    ('warranted_power_curve.csv'). Historically those only resolved when the
+    process happened to be launched from the config's directory, and the
+    bundled sample config shipped with absolute sandbox paths baked in —
+    which silently degraded the analysis (generic power curve, missing
+    long-term reference) everywhere else: CLI from another folder, the
+    bundled web demo, the GitHub CI test suite, and the Windows EXE.
+    """
+    base = os.path.dirname(os.path.abspath(config_path)) if config_path else None
+    for key in _PATH_FIELDS:
+        v = cfg.get(key)
+        if not v or not isinstance(v, str):
+            continue
+        if os.path.isabs(v) or os.path.exists(v):
+            continue  # absolute, or already resolvable from the CWD
+        if base and os.path.exists(os.path.join(base, v)):
+            cfg[key] = os.path.join(base, v)
 
 
 _FLOAT_FIELDS = ["latitude", "longitude", "hub_height_m", "rotor_diameter_m",
